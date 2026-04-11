@@ -21,9 +21,8 @@ env/
 secrets.json
 credentials.json
 
-# Data and models
+# Data and diagrams
 data/
-models/
 docs/diagrams/
 
 # Streamlit

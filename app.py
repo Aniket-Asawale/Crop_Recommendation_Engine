@@ -2,10 +2,10 @@
 Streamlit Dashboard for the Crop Recommendation Engine.
 
 Usage:
-    1. Start the API server:
-       cd Crop_Recommendation_Engine && python -c "import uvicorn; uvicorn.run('api:app', host='127.0.0.1', port=8002)"
-    2. Run the dashboard:
-       streamlit run Crop_Recommendation_Engine/app.py --server.port 8501
+    Run the dashboard:
+       streamlit run app.py --server.port 8501
+
+For deployment on Streamlit Cloud, commit the models/ directory and deploy directly.
 """
 
 import json
@@ -14,8 +14,9 @@ import requests
 import folium
 from streamlit_folium import st_folium
 
-# Use gateway for all requests (works both locally and via tunnel)
-API_BASE = "http://127.0.0.1:8080/api/crop"
+from models.inference import CropRecommender
+from generators.crop_profiles import ALL_CROPS, CROP_TO_FAMILY
+from config import CONFIDENCE_HIGH, CONFIDENCE_LOW, MH_LAT_RANGE, MH_LON_RANGE, VALID_SEASONS, VALID_SOIL_TYPES
 
 # ─── Constants ───
 SOIL_TYPES = [
@@ -54,6 +55,8 @@ AGRO_ZONE_BOUNDS = {
     "Northern Maharashtra":  {"lat": (19.5, 22.0), "lon": (72.5, 76.0)},
 }
 
+# Load model
+recommender = CropRecommender()
 
 def _detect_agro_zone(lat: float, lon: float) -> str:
     """Auto-detect agro zone from coordinates using bounding boxes.
@@ -310,17 +313,35 @@ st.markdown("""
 # ─── API helper ───
 
 
-# ─── API helper ───
-def _api_call(method, endpoint, payload=None, params=None):
-    """Make API call and return (success, data_or_error)."""
+# ─── Model helper ───
+def _model_call(endpoint, payload=None, params=None):
+    """Call model method and return (success, data_or_error)."""
     try:
-        if method == "GET":
-            r = requests.get(f"{API_BASE}{endpoint}", params=params, timeout=20)
+        if endpoint == "/predict":
+            data = recommender.predict(**payload)
+        elif endpoint == "/predict/live":
+            data = recommender.predict_with_live_weather(**payload)
+        elif endpoint == "/rotation":
+            data = recommender.plan_rotation(**payload)
+        elif endpoint == "/crops":
+            crops = []
+            for season, season_crops in ALL_CROPS.items():
+                for name in season_crops:
+                    crops.append({
+                        "name": name,
+                        "season": season,
+                        "family": CROP_TO_FAMILY.get(name, "Unknown"),
+                    })
+            data = {"crops": crops, "total": len(crops)}
+        elif endpoint == "/amendments":
+            data = CropRecommender.calculate_amendments(**payload)
+        elif endpoint == "/weather":
+            lat = params["lat"]
+            lon = params["lon"]
+            data = {"lat": lat, "lon": lon, "weather": recommender.fetch_weather(lat, lon)}
         else:
-            r = requests.post(f"{API_BASE}{endpoint}", json=payload, timeout=20)
-        if r.status_code == 200:
-            return True, r.json()
-        return False, f"HTTP {r.status_code}: {r.text[:500]}"
+            raise ValueError(f"Unknown endpoint {endpoint}")
+        return True, data
     except Exception as e:
         return False, str(e)
 
@@ -329,25 +350,23 @@ def _api_call(method, endpoint, payload=None, params=None):
 st.title("🌾 Crop Recommendation Engine")
 st.caption("AI-powered crop advisory for Maharashtra, India — powered by a calibrated Random Forest model")
 
-# ── Check API health ──
-health = None
-try:
-    r = requests.get(f"{API_BASE}/health", timeout=5)
-    if r.status_code == 200:
-        health = r.json()
-    else:
-        error_detail = r.json().get('detail', r.text) if r.headers.get('content-type') == 'application/json' else r.text
-        st.error(f"⚠️ **API returned error ({r.status_code}):** {error_detail}")
-        st.info("**Fix:** Ensure API Gateway is running:\n```\ncd ApiGateway\npython main.py\n```")
-        st.stop()
-except Exception as e:
-    st.error("⚠️ **API server not reachable.** Please ensure:")
-    st.code("Terminal 1: keep_tunnel_gateway_alive.bat\nTerminal 2: AgroManager.bat → [1] Start ALL")
-    st.stop()
-
-if not health:
-    st.error("❌ Failed to fetch API health data")
-    st.stop()
+# ── Model health ──
+health = {
+    "status": "healthy",
+    "model_stamp": recommender.model_stamp,
+    "temperature": recommender.temperature,
+    "num_classes": len(recommender.crop_labels),
+    "confidence_thresholds": {
+        "HIGH": f">= {CONFIDENCE_HIGH}",
+        "LOW": f"< {CONFIDENCE_LOW}",
+    },
+    "maharashtra_bounds": {
+        "lat": list(MH_LAT_RANGE),
+        "lon": list(MH_LON_RANGE),
+    },
+    "valid_seasons": sorted(VALID_SEASONS),
+    "valid_soil_types": sorted(VALID_SOIL_TYPES),
+}
 
 
 # ╔══════════════════════════════════════════════════════════════╗
@@ -696,11 +715,11 @@ with tab1:
     if st.button("🚀 Get Recommendation", key="predict_btn", type="primary", use_container_width=True):
         with st.spinner("Analyzing soil and weather data..."):
             if use_live:
-                ok, data = _api_call("POST", "/predict/live", base_payload)
+                ok, data = _model_call("/predict/live", payload=base_payload)
             else:
                 payload = {**base_payload, "weather_temp": weather_temp, "humidity": humidity,
                            "rainfall": rainfall, "sunshine": sunshine, "wind_speed": wind_speed}
-                ok, data = _api_call("POST", "/predict", payload)
+                ok, data = _model_call("/predict", payload=payload)
 
             if ok:
                 _show_prediction(data)
@@ -717,7 +736,7 @@ with tab2:
 
     if st.button("🌍 Predict with Live Weather", key="live_btn", type="primary", use_container_width=True):
         with st.spinner("Fetching weather and analyzing..."):
-            ok, data = _api_call("POST", "/predict/live", base_payload)
+            ok, data = _model_call("/predict/live", payload=base_payload)
             if ok:
                 # Show fetched weather if available
                 if data.get("weather_used"):
@@ -743,7 +762,7 @@ with tab3:
         with st.spinner("Planning optimal rotation..."):
             rot_payload = {k: v for k, v in base_payload.items()
                            if k not in ("season", "month", "prev_crop", "irrigation_type")}
-            ok, data = _api_call("POST", "/rotation", rot_payload)
+            ok, data = _model_call("/rotation", payload=rot_payload)
             if ok:
                 season_icons = {"Kharif": "🌧️", "Rabi": "❄️", "Zaid": "☀️"}
                 rotation = data.get("rotation", [])
@@ -771,7 +790,7 @@ with tab4:
     st.markdown("### 🧪 Fertilizer Amendment Calculator")
     st.caption("Calculate NPK gaps and get specific fertilizer recommendations for your target crop.")
 
-    ok_crops, crop_data = _api_call("GET", "/crops")
+    ok_crops, crop_data = _model_call("/crops")
     crop_names = [c["name"] for c in crop_data.get("crops", [])] if ok_crops else ["Soybean"]
 
     col_a, col_b = st.columns(2)
@@ -787,7 +806,7 @@ with tab4:
                 nitrogen=nitrogen, phosphorus=phosphorus, potassium=potassium,
                 field_area_ha=field_area,
             )
-            ok, data = _api_call("POST", "/amendments", amend_payload)
+            ok, data = _model_call("/amendments", payload=amend_payload)
             if ok:
                 st.markdown(f"### 🌱 Amendment Plan for **{data.get('crop', target_crop)}**")
                 st.divider()
@@ -872,7 +891,7 @@ with tab5:
 
     if st.button("☁️ Fetch Weather", key="weather_btn", type="primary", use_container_width=True):
         with st.spinner("Fetching weather data..."):
-            ok, data = _api_call("GET", "/weather", params={"lat": w_lat, "lon": w_lon})
+            ok, data = _model_call("/weather", params={"lat": w_lat, "lon": w_lon})
             if ok:
                 w = data.get("weather", {})
                 wcols = st.columns(5)
