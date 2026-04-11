@@ -1,0 +1,73 @@
+======================================================================
+MODEL COMPARISON REPORT — Crop Recommendation Engine
+======================================================================
+Date: 2026-03-26 19:16
+Features: 49 | Classes: 26
+Split: Temporal holdout (Train=2023-2024, Test=2025)
+Training noise: 5% label noise injected for calibration
+
+── Model Rankings (by Accuracy) ──
+Rank  Model                            Accuracy   F1-macro  F1-weighted  Time(s)
+---------------------------------------------------------------------------
+1     XGBoost                            0.7987     0.7522       0.7976     28.9
+2     Voting (RF+XGB+LGBM)               0.7983     0.7556       0.7976     56.6
+3     Random Forest                      0.7967     0.7493       0.7957      7.8
+4     LightGBM                           0.7954     0.7524       0.7947     27.2
+5     SVM (RBF)                          0.7450     0.7008       0.7447     20.4
+6     KNN                                0.6508     0.6012       0.6523      0.6
+
+── Best Model: XGBoost ──
+Accuracy:    0.7987
+F1-macro:    0.7522
+F1-weighted: 0.7976
+
+── Per-Class Classification Report (Best Model) ──
+                 precision    recall  f1-score   support
+
+          Bajra       0.59      0.56      0.57        61
+     Black Gram       0.74      0.87      0.80        69
+        Brinjal       0.99      1.00      0.99       271
+Chickpea (Gram)       0.81      0.81      0.81       140
+         Chilli       0.91      0.83      0.87        36
+         Cotton       0.76      0.61      0.68       128
+          Grape       0.94      0.93      0.93       120
+     Green Gram       0.61      0.61      0.61        33
+      Groundnut       0.64      0.62      0.63        26
+ Jowar (Kharif)       0.74      0.69      0.71       149
+         Lentil       0.70      0.62      0.66        71
+        Linseed       0.70      0.80      0.75        79
+          Maize       0.51      0.67      0.58        58
+           Okra       0.89      0.93      0.91        43
+          Onion       0.78      0.68      0.73        90
+Pigeonpea (Tur)       0.94      0.96      0.95       151
+     Rabi Jowar       0.67      0.68      0.67        84
+           Rice       0.85      0.90      0.88       156
+      Safflower       0.58      0.58      0.58        77
+         Sesame       0.69      0.61      0.65       100
+        Soybean       0.80      0.88      0.83       112
+      Sugarcane       0.90      0.87      0.88       139
+      Sunflower       0.66      0.59      0.62        39
+         Tomato       1.00      0.96      0.98        50
+       Turmeric       0.45      0.50      0.47        18
+          Wheat       0.78      0.87      0.82       100
+
+       accuracy                           0.80      2400
+      macro avg       0.75      0.75      0.75      2400
+   weighted avg       0.80      0.80      0.80      2400
+
+
+── Probability Calibration (Temperature Scaling) ──
+  Temperature:           1.058
+  Brier score (raw):     0.01142
+  Brier score (cal):     0.01134
+  Mean P(max) raw:       0.8461
+  Mean P(max) cal:       0.8309
+  % over 0.99 (raw):     16.1%
+  % over 0.99 (cal):     10.5%
+  % uncertain (raw):     13.9% (<0.6)
+  % uncertain (cal):     16.0% (<0.6)
+
+── Confidence Thresholds ──
+  HIGH confidence:       >= 0.75
+  UNCERTAIN threshold:   < 0.6
+  Crops below UNCERTAIN threshold are flagged for manual review.

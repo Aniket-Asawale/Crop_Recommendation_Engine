@@ -1,0 +1,85 @@
+============================================================
+PREPROCESSING REPORT — Crop Recommendation Engine
+============================================================
+
+Raw rows:       7200
+Final rows:     7200
+Feature cols:   42
+Target classes: 26
+
+── Crop Label Mapping ──
+   0 → Bajra (192 rows)
+   1 → Black Gram (213 rows)
+   2 → Brinjal (809 rows)
+   3 → Chickpea (Gram) (433 rows)
+   4 → Chilli (130 rows)
+   5 → Cotton (351 rows)
+   6 → Grape (345 rows)
+   7 → Green Gram (86 rows)
+   8 → Groundnut (83 rows)
+   9 → Jowar (Kharif) (439 rows)
+  10 → Lentil (171 rows)
+  11 → Linseed (246 rows)
+  12 → Maize (225 rows)
+  13 → Okra (116 rows)
+  14 → Onion (250 rows)
+  15 → Pigeonpea (Tur) (453 rows)
+  16 → Rabi Jowar (258 rows)
+  17 → Rice (505 rows)
+  18 → Safflower (245 rows)
+  19 → Sesame (258 rows)
+  20 → Soybean (323 rows)
+  21 → Sugarcane (405 rows)
+  22 → Sunflower (120 rows)
+  23 → Tomato (145 rows)
+  24 → Turmeric (67 rows)
+  25 → Wheat (332 rows)
+
+── Feature Statistics ──
+  season_year: min=2023.00, max=2025.00, mean=2024.00
+  sensor_nitrogen: min=0.00, max=275.85, mean=92.48
+  sensor_phosphorus: min=7.95, max=146.68, mean=61.72
+  sensor_potassium: min=10.26, max=287.53, mean=116.76
+  sensor_temperature: min=5.80, max=41.60, mean=24.49
+  sensor_moisture: min=7.50, max=98.00, mean=46.83
+  sensor_ec: min=104.00, max=5598.00, mean=1148.46
+  sensor_ph: min=5.00, max=8.30, mean=6.84
+  weather_temp_mean: min=15.00, max=40.00, mean=27.01
+  weather_humidity_mean: min=20.00, max=90.00, mean=60.00
+  weather_rainfall_mm: min=0.00, max=484.00, mean=113.63
+  weather_sunshine_hrs: min=4.00, max=11.00, mean=7.18
+  weather_wind_speed: min=5.00, max=18.00, mean=11.25
+  lat: min=11.02, max=30.73, mean=19.75
+  lon: min=72.57, max=85.82, mean=76.37
+  altitude_m: min=5.00, max=1353.00, mean=381.55
+  organic_carbon_pct: min=0.20, max=1.15, mean=0.56
+  irrigation_available: min=0.00, max=1.00, mean=0.30
+  moisture_deficit: min=-12.17, max=65.56, mean=35.47
+  ec_stress_flag: min=0.00, max=1.00, mean=0.00
+  month_sin: min=-1.00, max=1.00, mean=-0.13
+  month_cos: min=-1.00, max=1.00, mean=0.02
+  soil_drainage_ordinal: min=1.00, max=7.00, mean=4.84
+  drainage_class_encoded: min=0.00, max=4.00, mean=1.73
+  agro_zone_encoded: min=0.00, max=12.00, mean=8.22
+  soil_type_Alluvial: min=0.00, max=1.00, mean=0.13
+  soil_type_Black (Regur): min=0.00, max=1.00, mean=0.58
+  soil_type_Clay: min=0.00, max=1.00, mean=0.03
+  soil_type_Laterite: min=0.00, max=1.00, mean=0.07
+  soil_type_Red: min=0.00, max=1.00, mean=0.15
+  soil_type_Sandy: min=0.00, max=1.00, mean=0.04
+  soil_texture_Clay: min=0.00, max=1.00, mean=0.17
+  soil_texture_Clay Loam: min=0.00, max=1.00, mean=0.30
+  soil_texture_Gravelly Loam: min=0.00, max=1.00, mean=0.07
+  soil_texture_Heavy Clay: min=0.00, max=1.00, mean=0.03
+  soil_texture_Sand: min=0.00, max=1.00, mean=0.04
+  soil_texture_Sandy Loam: min=0.00, max=1.00, mean=0.15
+  soil_texture_Silt Loam: min=0.00, max=1.00, mean=0.13
+  soil_texture_Silty Clay: min=0.00, max=1.00, mean=0.11
+  is_season_Kharif: min=0.00, max=1.00, mean=0.50
+  is_season_Rabi: min=0.00, max=1.00, mean=0.33
+  is_season_Zaid: min=0.00, max=1.00, mean=0.17
+
+── Confidence Distribution ──
+  high: 4230 (58.8%)
+  medium: 1882 (26.1%)
+  uncertain: 1088 (15.1%)

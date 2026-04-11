@@ -1,0 +1,133 @@
+====================================================================================================
+LLM (Claude 4.6 Opus) vs ML MODEL (Random Forest) -- LIVE Cross-Validation
+Model stamp: 2026_03  |  Temperature: 0.589
+====================================================================================================
+
+#    Scenario                                      Model Pred           Conf LLM Expects            Match?  
+------------------------------------------------------------------------------------------------------------
+1    Soybean: Vidarbha black soil Kharif           Jowar (Kharif)      75.0% Soybean                DISAGREE
+2    Cotton: Marathwada deep black Kharif          Cotton              84.7% Cotton                 YES     
+3    Rice: Konkan coastal alluvial Kharif          Rice                67.9% Rice                   YES     
+4    Sugarcane: W Maharashtra alluvial Kharif      Sugarcane           96.1% Sugarcane              YES     
+5    Groundnut: Sandy red soil Kharif              Groundnut           67.8% Groundnut              YES     
+6    Chickpea: Black soil Marathwada Rabi          Chickpea (Gram)     89.0% Chickpea (Gram)        YES     
+7    Wheat: Alluvial Indo-Gangetic Rabi (OOD)      Wheat               41.5% Wheat                  YES     
+8    Safflower: Black soil Vidarbha Rabi           Safflower           54.8% Safflower              YES     
+9    Grape: Red soil W Maharashtra Rabi            Grape               83.2% Grape                  YES     
+10   Onion: Red sandy N Maharashtra Rabi           Onion               69.2% Onion                  YES     
+11   Okra: Sandy Laterite Zaid                     Okra                81.0% Okra                   YES     
+12   Chilli: Black soil Zaid                       Chilli              83.5% Chilli                 YES     
+13   Brinjal: Alluvial clay Zaid                   Brinjal             87.8% Brinjal                YES     
+14   Ambiguous: mid-range everything Kharif        Jowar (Kharif)      66.1% Jowar (Kharif) or Soybean YES     
+15   Extreme: very high NPK + hot + dry            Brinjal             71.9% No ideal crop (edge case) DISAGREE
+
+Agreement: 13/15 (87%)
+
+====================================================================================================
+DISAGREEMENTS (2 cases)
+====================================================================================================
+
+  1. Soybean: Vidarbha black soil Kharif
+    Model says: Jowar (Kharif) (75.0%) [MEDIUM]
+    Top-3:      Jowar (Kharif)(75.0%), Soybean(23.6%), Cotton(1.1%)
+    LLM says:   Soybean
+    Reasoning:  N=110,P=55,K=70 matches soybean profile (N:90-130,P:45-65,K:55-85). Black soil Vidarbha is THE soybean belt of Maharashtra. Kharif season, temp=26C, rain=900mm -- textbook soybean.
+    --> Model had MEDIUM confidence (75.0%)
+
+  15. Extreme: very high NPK + hot + dry
+    Model says: Brinjal (71.9%) [MEDIUM]
+    Top-3:      Brinjal(71.9%), Tomato(10.2%), Sugarcane(6.0%)
+    LLM says:   No ideal crop (edge case)
+    Reasoning:  N=300,P=150,K=300 + temp=40 + rain=50mm is agronomically extreme. No standard Maharashtra crop thrives here. Model should show MEDIUM/UNCERTAIN confidence.
+    --> Model had MEDIUM confidence (71.9%)
+
+====================================================================================================
+DETAILED LLM REASONING + LIVE MODEL OUTPUT
+====================================================================================================
+
+  1. Soybean: Vidarbha black soil Kharif
+    Model: Jowar (Kharif) (75.0%, MEDIUM)  |  LLM: Soybean  |  [DISAGREE]
+    Top-3: Jowar (Kharif)(75.0%), Soybean(23.6%), Cotton(1.1%)
+    LLM:   N=110,P=55,K=70 matches soybean profile (N:90-130,P:45-65,K:55-85). Black soil Vidarbha is THE soybean belt of Maharashtra. Kharif season, temp=26C, rain=900mm -- textbook soybean.
+
+  2. Cotton: Marathwada deep black Kharif
+    Model: Cotton (84.7%, HIGH)  |  LLM: Cotton  |  [AGREE]
+    Top-3: Cotton(84.7%), Tomato(5.2%), Sugarcane(4.4%)
+    LLM:   N=170,P=75,K=175 matches cotton (N:140-200,P:60-90,K:150-200). Deep black soil (Regur) with high K and moderate rainfall=650mm is classic Marathwada cotton belt. Temp=30C optimal.
+
+  3. Rice: Konkan coastal alluvial Kharif
+    Model: Rice (67.9%, MEDIUM)  |  LLM: Rice  |  [AGREE]
+    Top-3: Rice(67.9%), Jowar (Kharif)(8.9%), Cotton(8.2%)
+    LLM:   Rain=1800mm is the key signal -- only Rice needs 1000-2000mm. Alluvial soil, coastal lat=17, high humidity=85%. Konkan is Maharashtra's rice bowl.
+
+  4. Sugarcane: W Maharashtra alluvial Kharif
+    Model: Sugarcane (96.1%, HIGH)  |  LLM: Sugarcane  |  [AGREE]
+    Top-3: Sugarcane(96.1%), Maize(2.6%), Sesame(0.4%)
+    LLM:   N=250,P=120,K=250 -- extremely high NPK is the hallmark of sugarcane. Rain=2000mm, alluvial soil. W Maharashtra (Kolhapur/Sangli) is India's sugar belt.
+
+  5. Groundnut: Sandy red soil Kharif
+    Model: Groundnut (67.8%, MEDIUM)  |  LLM: Groundnut  |  [AGREE]
+    Top-3: Groundnut(67.8%), Pigeonpea (Tur)(10.3%), Tomato(5.0%)
+    LLM:   N=60 is very low (groundnut is a legume, fixes own N). Sandy/red soil with good drainage, moderate rain=650mm. Classic rainfed groundnut.
+
+  6. Chickpea: Black soil Marathwada Rabi
+    Model: Chickpea (Gram) (89.0%, HIGH)  |  LLM: Chickpea (Gram)  |  [AGREE]
+    Top-3: Chickpea (Gram)(89.0%), Jowar (Kharif)(3.3%), Safflower(3.3%)
+    LLM:   N=30 (very low -- legume). P=50,K=100 match chickpea. Temp=18C (cool Rabi), black soil, low rain=350mm. Chickpea is Marathwada's #1 Rabi pulse.
+
+  7. Wheat: Alluvial Indo-Gangetic Rabi (OOD)
+    Model: Wheat (41.5%, OUT_OF_DISTRIBUTION)  |  LLM: Wheat  |  [AGREE]
+    Top-3: Wheat(41.5%), Grape(15.6%), Rabi Jowar(12.1%)
+    LLM:   NPK matches wheat perfectly. BUT lat=26.85 is outside Maharashtra -- OOD expected. Model should flag low confidence or OOD.
+
+  8. Safflower: Black soil Vidarbha Rabi
+    Model: Safflower (54.8%, UNCERTAIN)  |  LLM: Safflower  |  [AGREE]
+    Top-3: Safflower(54.8%), Rabi Jowar(31.2%), Jowar (Kharif)(7.2%)
+    LLM:   N=75,P=50,K=105 matches safflower. Black soil, dry Rabi (rain=320mm), Vidarbha. Overlap with Linseed/Sunflower may lower confidence.
+
+  9. Grape: Red soil W Maharashtra Rabi
+    Model: Grape (83.2%, HIGH)  |  LLM: Grape  |  [AGREE]
+    Top-3: Grape(83.2%), Onion(6.5%), Turmeric(2.7%)
+    LLM:   K=215 is very high -- grapes demand heavy potassium (K:180-250). Red/laterite soil, Nashik/Sangli grape belt. Strong match.
+
+  10. Onion: Red sandy N Maharashtra Rabi
+    Model: Onion (69.2%, MEDIUM)  |  LLM: Onion  |  [AGREE]
+    Top-3: Onion(69.2%), Grape(16.2%), Turmeric(11.0%)
+    LLM:   N=125,P=100,K=150 matches onion (N:100-150,P:80-120,K:120-180). Nashik is India's onion capital. May overlap with Grape due to soil/season similarity.
+
+  11. Okra: Sandy Laterite Zaid
+    Model: Okra (81.0%, HIGH)  |  LLM: Okra  |  [AGREE]
+    Top-3: Okra(81.0%), Sesame(13.3%), Green Gram(4.2%)
+    LLM:   N=50,P=25,K=40 matches okra. Temp=36C (hot Zaid), very low rain=100mm, sandy/laterite soil. Okra thrives in extreme summer heat.
+
+  12. Chilli: Black soil Zaid
+    Model: Chilli (83.5%, HIGH)  |  LLM: Chilli  |  [AGREE]
+    Top-3: Chilli(83.5%), Jowar (Kharif)(4.2%), Cotton(3.6%)
+    LLM:   N=70,P=38,K=60 matches chilli. High pH=7.5 on black soil, temp=35C, dry. Chilli's alkaline soil preference distinguishes it from other Solanaceae.
+
+  13. Brinjal: Alluvial clay Zaid
+    Model: Brinjal (87.8%, HIGH)  |  LLM: Brinjal  |  [AGREE]
+    Top-3: Brinjal(87.8%), Cotton(5.4%), Maize(1.5%)
+    LLM:   N=135,P=80,K=140 matches brinjal. Alluvial/clay soil, moderate temp=27C. Brinjal's high NPK demand + clay soil preference is distinctive.
+
+  14. Ambiguous: mid-range everything Kharif
+    Model: Jowar (Kharif) (66.1%, MEDIUM)  |  LLM: Jowar (Kharif) or Soybean  |  [AGREE]
+    Top-3: Jowar (Kharif)(66.1%), Cotton(20.8%), Soybean(11.0%)
+    LLM:   Mid-range NPK overlaps Jowar and Soybean. Jowar is a reasonable default for generic Kharif conditions on black soil.
+
+  15. Extreme: very high NPK + hot + dry
+    Model: Brinjal (71.9%, MEDIUM)  |  LLM: No ideal crop (edge case)  |  [DISAGREE]
+    Top-3: Brinjal(71.9%), Tomato(10.2%), Sugarcane(6.0%)
+    LLM:   N=300,P=150,K=300 + temp=40 + rain=50mm is agronomically extreme. No standard Maharashtra crop thrives here. Model should show MEDIUM/UNCERTAIN confidence.
+
+====================================================================================================
+RESOLUTION STRATEGY
+====================================================================================================
+  HIGH (>=75%)         -> Trust the model.
+  MEDIUM (60-75%)      -> Show top-3 + LLM alternative. Let farmer choose.
+  UNCERTAIN (<60%)     -> Show top-3 + LLM + 'Consult local KVK'.
+  OUT-OF-DISTRIBUTION  -> Reject: 'Model trained for Maharashtra only.'
+
+====================================================================================================
+VALIDATION COMPLETE
+====================================================================================================
