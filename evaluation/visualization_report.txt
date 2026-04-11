@@ -1,0 +1,59 @@
+======================================================================
+MODEL VISUALIZATION REPORT
+======================================================================
+
+[1] Feature Importance (Top 20)
+    Saved: evaluation/feature_importance.png
+     1. P_x_K                          0.0820
+     2. N_x_K                          0.0634
+     3. N_x_P                          0.0595
+     4. sensor_nitrogen                0.0569
+     5. sensor_ph                      0.0538
+     6. sensor_phosphorus              0.0535
+     7. sensor_potassium               0.0529
+     8. npk_ratio_n                    0.0464
+     9. soil_drainage_ordinal          0.0460
+    10. drainage_class_encoded         0.0412
+
+[2] Confusion Matrix
+    Saved: evaluation/confusion_matrix.png
+
+[3] Per-class Accuracy
+    Saved: evaluation/per_class_accuracy.png
+    Bajra                 83.7%  [LOW]
+    Black Gram            86.5%  [OK]
+    Brinjal              100.0%  [HIGH]
+    Chickpea (Gram)       88.1%  [OK]
+    Chilli                99.4%  [HIGH]
+    Cotton                90.9%  [OK]
+    Grape                 95.7%  [HIGH]
+    Green Gram            85.9%  [OK]
+    Groundnut             77.8%  [LOW]
+    Jowar (Kharif)        80.4%  [LOW]
+    Lentil                82.5%  [LOW]
+    Linseed               85.4%  [OK]
+    Maize                 63.5%  [LOW]
+    Okra                  98.5%  [HIGH]
+    Onion                 87.3%  [OK]
+    Pigeonpea (Tur)       88.5%  [OK]
+    Rabi Jowar            73.7%  [LOW]
+    Rice                  83.3%  [LOW]
+    Safflower             65.8%  [LOW]
+    Sesame                59.4%  [LOW]
+    Soybean               96.9%  [HIGH]
+    Sugarcane             97.9%  [HIGH]
+    Sunflower             76.7%  [LOW]
+    Tomato                98.6%  [HIGH]
+    Turmeric              83.1%  [LOW]
+    Wheat                 56.2%  [LOW]
+
+    Overall Accuracy: 0.8692
+    F1-macro:        0.8409
+
+[4] Reliability Diagram (Calibration)
+    Saved: evaluation/reliability_diagram.png
+    Temperature: 0.589
+
+======================================================================
+VISUALIZATION COMPLETE
+======================================================================

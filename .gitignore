@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Environment variables and secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.key
+*.pem
+secrets.json
+credentials.json
+
+# Data and models
+data/
+models/
+docs/diagrams/
+
+# Streamlit
+.streamlit/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary and logs
+*.log
+.tmp/
+temp/
+*.swp
+*.swo
+
+# Build and distribution
+dist/
+build/
+*.egg-info/
+
+# Specific project files to ignore
+start_crop_cloudflared.bat
+PLAN.md
