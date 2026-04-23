@@ -72,15 +72,51 @@ class CropRecommender:
         self.model_stamp = model_stamp
         self.model = joblib.load(REGISTRY_DIR / f"best_model_{model_stamp}.pkl")
         self.scaler = joblib.load(REGISTRY_DIR / f"scaler_{model_stamp}.pkl")
+
+        # \u2500\u2500 Calibrator: supports isotonic (new) and temperature (legacy) \u2500\u2500
         cal_data = joblib.load(REGISTRY_DIR / f"calibrator_{model_stamp}.pkl")
-        self.temperature = cal_data["temperature"]
-        logger.info("Loaded model=%s, T=%.3f", model_stamp, self.temperature)
+        self.calibration_method = cal_data.get("method", "temperature")
+        self.temperature = float(cal_data.get("temperature", 1.0))
+        self.iso_calibrator = cal_data.get("estimator", None)
+        logger.info(
+            "Loaded model=%s  calibration=%s  T=%.3f",
+            model_stamp, self.calibration_method, self.temperature,
+        )
+
+        # \u2500\u2500 Optional OOD stats (Mahalanobis + RF disagreement) \u2500\u2500
+        ood_path = REGISTRY_DIR / f"ood_stats_{model_stamp}.pkl"
+        self.ood_stats = joblib.load(ood_path) if ood_path.exists() else None
+        if self.ood_stats:
+            logger.info(
+                "Loaded OOD stats \u2014 Mahal p%d threshold %.3f",
+                self.ood_stats.get("mahal_percentile", 99),
+                self.ood_stats.get("mahal_threshold", 0.0),
+            )
+
+        # \u2500\u2500 Optional conformal quantile \u2500\u2500
+        conf_path = REGISTRY_DIR / f"conformal_{model_stamp}.pkl"
+        self.conformal = joblib.load(conf_path) if conf_path.exists() else None
 
         with open(ENCODERS_JSON) as f:
             self.encoders = json.load(f)
 
-        # Reverse map: encoded int -> crop name
+        # Reverse map: encoded int -> crop name (full training encoder; may
+        # contain classes the model never saw if the group split pruned any).
         self.crop_labels = {v: k for k, v in self.encoders["crop_label"].items()}
+
+        # Column-index -> crop name, aligned with self.model.classes_.
+        # ``predict_proba`` returns columns in that order, so we use THIS map
+        # whenever indexing into a probability vector. ``crop_labels`` stays
+        # as the authoritative encoder lookup for reverse mappings.
+        model_classes = getattr(self.model, "classes_", None)
+        if model_classes is not None:
+            self.col_to_crop = {
+                i: self.crop_labels.get(int(c), f"Unknown_{int(c)}")
+                for i, c in enumerate(model_classes)
+            }
+        else:
+            self.col_to_crop = dict(self.crop_labels)
+        self.n_model_classes = len(self.col_to_crop)
 
         # Get feature column order from training data
         df_ref = pd.read_csv(FEATURES_CSV, nrows=5)
@@ -102,10 +138,18 @@ class CropRecommender:
         latest = model_files[-1].stem.replace("best_model_", "")
         return latest
 
-    def _calibrate(self, raw_probs: np.ndarray) -> np.ndarray:
-        """Apply temperature scaling calibration."""
+    def _calibrate(self, raw_probs: np.ndarray, X_for_model=None) -> np.ndarray:
+        """Apply the loaded calibrator.
+
+        For isotonic we call the stored CalibratedClassifierCV directly
+        (it needs the feature matrix).  For temperature we scale the logits.
+        """
+        if (self.calibration_method == "isotonic"
+                and self.iso_calibrator is not None
+                and X_for_model is not None):
+            return self.iso_calibrator.predict_proba(X_for_model)
         logits = np.log(np.clip(raw_probs, 1e-10, 1.0))
-        scaled = logits / self.temperature
+        scaled = logits / max(self.temperature, 1e-6)
         exp_s = np.exp(scaled - scaled.max(axis=1, keepdims=True))
         return exp_s / exp_s.sum(axis=1, keepdims=True)
 
@@ -114,18 +158,56 @@ class CropRecommender:
         mapping = self.encoders.get(encoder_key, {})
         return mapping.get(category, 0)
 
-    def _is_out_of_distribution(self, lat: float, lon: float,
-                                 cal_probs: np.ndarray) -> bool:
-        """Check if input is outside Maharashtra training envelope.
+    def _mahalanobis_distance(self, X_model: np.ndarray) -> Optional[float]:
+        """Return the Mahalanobis distance from the training centre,
+        or None if OOD stats are unavailable."""
+        if not self.ood_stats:
+            return None
+        from scipy.spatial.distance import mahalanobis
+        mean = np.asarray(self.ood_stats["mean"], dtype=np.float64)
+        cov_inv = np.asarray(self.ood_stats["cov_inv"], dtype=np.float64)
+        x = np.asarray(X_model, dtype=np.float64).ravel()
+        if x.shape[0] != mean.shape[0]:
+            return None
+        return float(mahalanobis(x, mean, cov_inv))
 
-        OOD is triggered only when the location is geographically outside
-        Maharashtra.  Low-confidence predictions inside Maharashtra are
-        legitimate (e.g. rare soil-season combos) and should NOT be
-        flagged as OOD — they already surface via the UNCERTAIN flag.
+    def _is_out_of_distribution(self, lat: float, lon: float,
+                                cal_probs: np.ndarray,
+                                X_model: Optional[np.ndarray] = None) -> dict:
+        """OOD detection blending geographic envelope with Mahalanobis distance.
+
+        Returns a dict with keys:
+            is_ood, geo_outside, mahal_distance, mahal_threshold, reason.
         """
         geo_outside = (lat < MH_LAT_RANGE[0] or lat > MH_LAT_RANGE[1] or
                        lon < MH_LON_RANGE[0] or lon > MH_LON_RANGE[1])
-        return geo_outside
+        mahal_d = mahal_thr = None
+        mahal_ood = False
+        if X_model is not None and self.ood_stats is not None:
+            mahal_d = self._mahalanobis_distance(X_model)
+            mahal_thr = float(self.ood_stats.get("mahal_threshold", 0.0))
+            if mahal_d is not None and mahal_thr > 0:
+                mahal_ood = mahal_d > mahal_thr
+        low_prob_ood = (
+            self.ood_stats is None
+            and float(cal_probs.max()) < OOD_PROB_THRESHOLD
+        )
+        is_ood = bool(geo_outside or mahal_ood or low_prob_ood)
+        reasons = []
+        if geo_outside:  reasons.append("location outside Maharashtra")
+        if mahal_ood:    reasons.append(
+            f"feature-space distance {mahal_d:.2f} > threshold {mahal_thr:.2f}"
+        )
+        if low_prob_ood: reasons.append(
+            f"max calibrated prob {cal_probs.max():.2f} < {OOD_PROB_THRESHOLD}"
+        )
+        return {
+            "is_ood": is_ood,
+            "geo_outside": bool(geo_outside),
+            "mahal_distance":  mahal_d,
+            "mahal_threshold": mahal_thr,
+            "reason": "; ".join(reasons),
+        }
 
     def _confidence_flag(self, confidence: float) -> str:
         """Assign confidence tier."""
@@ -134,6 +216,77 @@ class CropRecommender:
         elif confidence >= MEDIUM_THRESHOLD:
             return "MEDIUM"
         return "LOW"
+
+    # ──────────────────────────────────────────────────────────────
+    # Weather-sensitivity badge (T9)
+    # ──────────────────────────────────────────────────────────────
+
+    # Column names in feat_cols that represent the three weather signals.
+    # These must match the keys written by _build_feature_vector.
+    _WEATHER_PERTURB_COLS = (
+        "weather_rainfall_mm",
+        "weather_temp_mean",
+        "weather_humidity_mean",
+    )
+    # Corresponding INPUT_BOUNDS keys used to compute ±1σ proxy.
+    _WEATHER_BOUND_KEYS = (
+        "rainfall",
+        "weather_temp",
+        "humidity",
+    )
+
+    def _weather_sensitivity(self, X_row: np.ndarray) -> dict:
+        """Estimate how much the top-1 calibrated confidence shifts under
+        ±1σ perturbations of rainfall, air temperature, and humidity.
+
+        σ proxy = (max - min) * 0.10  from INPUT_BOUNDS.
+
+        Returns
+        -------
+        dict with keys:
+            sensitivity_pct : float — max absolute shift in top-1 confidence
+                              across all perturbations, expressed as percentage
+                              points (0–100).
+            label : str — "Low" (<3 pp), "Medium" (3–8 pp), "High" (>8 pp).
+        """
+        base_probs_raw = self.model.predict_proba(X_row)
+        base_cal = self._calibrate(base_probs_raw, X_for_model=X_row)
+        base_top1 = float(base_cal[0].max())
+
+        max_delta = 0.0
+        for feat_col, bound_key in zip(
+                self._WEATHER_PERTURB_COLS, self._WEATHER_BOUND_KEYS):
+            # Find column index; skip silently if not present
+            if feat_col not in self.feat_cols:
+                continue
+            col_idx = self.feat_cols.index(feat_col)
+
+            # Compute ±1σ step from INPUT_BOUNDS range × 0.10
+            lo, hi, _ = INPUT_BOUNDS.get(bound_key, (0, 1, ""))
+            sigma = (hi - lo) * 0.10
+
+            for sign in (+1, -1):
+                X_perturb = X_row.copy()
+                X_perturb[0, col_idx] = X_perturb[0, col_idx] + sign * sigma
+                try:
+                    raw_p = self.model.predict_proba(X_perturb)
+                    cal_p = self._calibrate(raw_p, X_for_model=X_perturb)
+                    top1_p = float(cal_p[0].max())
+                    delta = abs(top1_p - base_top1)
+                    if delta > max_delta:
+                        max_delta = delta
+                except Exception:
+                    pass  # never crash the main prediction
+
+        sensitivity_pct = round(max_delta * 100, 2)
+        if sensitivity_pct < 3.0:
+            label = "Low"
+        elif sensitivity_pct <= 8.0:
+            label = "Medium"
+        else:
+            label = "High"
+
+        return {"sensitivity_pct": sensitivity_pct, "label": label}
 
     # Input validation bounds and valid values imported from config module
 
@@ -273,10 +426,11 @@ class CropRecommender:
         # Soil drainage ordinal (from config.py)
         sdo = SOIL_DRAINAGE_MAP.get(kwargs["soil_type"], 4)
 
-        # Season one-hot
+        # Season one-hot (includes Annual — v2026_05)
         kh = 1 if season == "Kharif" else 0
         rb = 1 if season == "Rabi" else 0
         zd = 1 if season == "Zaid" else 0
+        an = 1 if season == "Annual" else 0
 
         # Month cyclical
         ms = math.sin(2 * math.pi * month / 12)
@@ -302,6 +456,7 @@ class CropRecommender:
             # Encoded categoricals (drainage + agro_zone label-encoded)
             "drainage_class_encoded": dr, "agro_zone_encoded": az,
             "is_season_Kharif": kh, "is_season_Rabi": rb, "is_season_Zaid": zd,
+            "is_season_Annual": an,
             # Interaction features
             "N_x_P": N * P, "N_x_K": N * K, "P_x_K": P * K,
             "temp_x_moisture": temp * moist,
@@ -362,7 +517,10 @@ class CropRecommender:
         agro_zone : str
             e.g. "Vidarbha", "Marathwada", "Western Maharashtra"
         season : str
-            "Kharif", "Rabi", or "Zaid"
+            "Kharif", "Rabi", "Zaid", or "Annual".
+            For K/R/Z the top-3 pool also includes perennial (Annual) crops
+            such as Mango, Grape, Sugarcane. For "Annual" only perennials
+            are returned.
         month : int
             Month number (1-12)
         prev_crop : str, optional
@@ -387,35 +545,66 @@ class CropRecommender:
         for w in input_warnings:
             logger.warning("Input warning: %s", w)
 
-        # crop_family_encoded removed from training — no ensembling needed
         X = self._build_feature_vector(**kwargs).reshape(1, -1)
         raw_probs = self.model.predict_proba(X)
-        cal_probs = self._calibrate(raw_probs)
+        cal_probs = self._calibrate(raw_probs, X_for_model=X)
 
-        # ── Season-aware candidate selection ──
-        # HARD RULE: Only crops that belong to the input season are eligible.
-        # This prevents Rabi crops from appearing in Kharif predictions, etc.
-        from generators.crop_profiles import CROP_TO_SEASON
+        # \u2500\u2500 Season-conditional renormalisation \u2500\u2500
+        # The model distributes probability across all crop classes; after the
+        # season hard-filter only a subset is eligible. Displayed confidence
+        # should reflect rank *within that eligible set* (rank-preserving
+        # normalization).
+        #
+        # v2026_05: "Annual" crops (perennials + sugarcane) bypass the seasonal
+        # filter — they are candidates regardless of the query season because
+        # they grow year-round once established. When the user explicitly
+        # requests season="Annual", only annual crops are returned.
+        from generators.crop_profiles import CROP_TO_SEASON, ANNUAL_CROP_NAMES
         input_season = kwargs["season"]
+
+        # Iterate by COLUMN index (aligned with cal_probs) — not by encoded
+        # int — so pruned classes don't cause out-of-bounds indexing.
+        season_mask = np.zeros_like(cal_probs[0], dtype=bool)
+        for col_idx, crop_name in self.col_to_crop.items():
+            crop_season = CROP_TO_SEASON.get(crop_name, "")
+            if input_season == "Annual":
+                if crop_season == "Annual":
+                    season_mask[col_idx] = True
+            else:
+                if crop_season == input_season or crop_name in ANNUAL_CROP_NAMES:
+                    season_mask[col_idx] = True
+        season_mass = float(cal_probs[0][season_mask].sum())
+
+        if season_mass > 1e-9:
+            cal_probs_season = cal_probs.copy()
+            cal_probs_season[0, ~season_mask] = 0.0
+            cal_probs_season[0, season_mask] /= season_mass
+        else:
+            # Degenerate case: no season-eligible crop has any probability mass.
+            cal_probs_season = cal_probs
 
         # Build season-filtered candidate list (take more than 3 to allow
         # backfilling after guardrails drop zero-confidence entries)
-        all_indices = cal_probs[0].argsort()[::-1]  # sorted desc by prob
+        all_indices = cal_probs_season[0].argsort()[::-1]  # sorted desc
         candidates = []
         for idx in all_indices:
-            crop_name = self.crop_labels.get(idx, f"Unknown_{idx}")
-            crop_season = CROP_TO_SEASON.get(crop_name, "")
-            if crop_season != input_season:
-                continue  # hard season filter — skip wrong-season crops
-            conf = float(cal_probs[0][idx])
+            if not season_mask[idx]:
+                continue
+            crop_name = self.col_to_crop.get(int(idx), f"Unknown_{int(idx)}")
+            conf = float(cal_probs_season[0][idx])
+            # Tag each candidate with its true season — for annual crops this
+            # will show "Annual" even when the user queried a K/R/Z season.
+            crop_season = CROP_TO_SEASON.get(crop_name, input_season)
             candidates.append({
                 "crop": crop_name,
                 "confidence": round(conf, 4),
                 "confidence_pct": f"{conf * 100:.1f}%",
                 "flag": self._confidence_flag(conf),
-                "season": input_season,
+                "season": crop_season,
+                "is_annual": crop_name in ANNUAL_CROP_NAMES,
+                "raw_confidence": round(float(cal_probs[0][idx]), 4),
             })
-            if len(candidates) >= 8:  # enough candidates for guardrail filtering
+            if len(candidates) >= 8:
                 break
 
         # Apply agronomic guardrails (soil/EC/drainage/regional adjustments)
@@ -425,29 +614,53 @@ class CropRecommender:
         if prev_crop is not None:
             candidates = self._apply_rotation_adjustment(candidates, prev_crop)
 
-        # Filter out zero-confidence crops and take top 3
         top3 = [c for c in candidates if c["confidence"] > 0.001]
         if len(top3) < 1:
-            top3 = candidates[:3]  # fallback: show best even if zero
+            top3 = candidates[:3]
         else:
             top3 = top3[:3]
 
-        # Overall flag = flag of top-1
+        # ── Weather-sensitivity badge (T9) ──
+        try:
+            ws = self._weather_sensitivity(X)
+            top3 = [{**entry, "weather_sensitivity": ws} for entry in top3]
+        except Exception as _ws_err:
+            logger.debug("Weather sensitivity skipped: %s", _ws_err)
+
         top1_conf = top3[0]["confidence"]
         overall_flag = self._confidence_flag(top1_conf)
 
-        # OOD check
-        is_ood = self._is_out_of_distribution(
-            kwargs["lat"], kwargs["lon"], cal_probs[0]
+        # \u2500\u2500 OOD: Mahalanobis (if stats present) + geographic envelope \u2500\u2500
+        ood_info = self._is_out_of_distribution(
+            kwargs["lat"], kwargs["lon"], cal_probs[0], X_model=X,
         )
+        is_ood = ood_info["is_ood"]
         if is_ood:
             overall_flag = "OUT_OF_DISTRIBUTION"
-            logger.warning("OOD detected for (%s, %s)", kwargs["lat"], kwargs["lon"])
+            logger.warning(
+                "OOD at (%s, %s): %s",
+                kwargs["lat"], kwargs["lon"], ood_info["reason"],
+            )
 
-        # Advisory text
+        # \u2500\u2500 Conformal prediction set (if available) \u2500\u2500
+        conformal_set = None
+        if self.conformal is not None:
+            q = float(self.conformal.get("quantile", 0.0))
+            threshold = max(0.0, 1.0 - q)
+            idx_sorted = np.argsort(cal_probs_season[0])[::-1]
+            conformal_set = [
+                self.col_to_crop.get(int(i), f"Unknown_{int(i)}")
+                for i in idx_sorted
+                if cal_probs_season[0][i] >= threshold
+            ]
+            # Guarantee non-empty set: always include the top-1
+            if not conformal_set and len(idx_sorted) > 0:
+                conformal_set = [
+                    self.col_to_crop.get(int(idx_sorted[0]),
+                                         f"Unknown_{int(idx_sorted[0])}")
+                ]
+
         advisory = self._build_advisory(top3, overall_flag, is_ood, kwargs)
-
-        # Structured farmer advisory (for UI panel + mobile API)
         farmer_advisory = self._build_farmer_advisory(top3, overall_flag, is_ood, kwargs)
 
         return {
@@ -456,6 +669,10 @@ class CropRecommender:
             "advisory": advisory,
             "farmer_advisory": farmer_advisory,
             "is_ood": is_ood,
+            "ood_info": ood_info,
+            "conformal_set": conformal_set,
+            "conformal_alpha": (self.conformal or {}).get("alpha"),
+            "season_mass_raw": season_mass,
             "input_warnings": input_warnings,
         }
 
@@ -467,7 +684,7 @@ class CropRecommender:
         """Apply soil, EC, drainage, and regional guardrails.
 
         Adjusts confidence scores of top-3 predictions based on agronomic
-        hard-rules that the ML model may not have learned from synthetic data.
+        hard-rules that the ML model may not have learned from generated data.
 
         Penalties/bonuses:
           - Soil incompatibility: −15% confidence
@@ -1156,6 +1373,387 @@ class CropRecommender:
             "notes": notes,
         }
 
+    # ──────────────────────────────────────────────────────────────
+    # Reverse recommendation (user picks a target crop; engine reports
+    # feasibility, deficits, fixes, and yield guidance)
+    # ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def calculate_reverse_recommendation(
+        target_crop: str,
+        nitrogen: float,
+        phosphorus: float,
+        potassium: float,
+        ph: float,
+        ec: float,
+        soil_type: str,
+        drainage: str,
+        rainfall: float,
+        weather_temp: float,
+        agro_zone: str = "",
+        field_area_ha: float = 1.0,
+    ) -> dict:
+        """Evaluate an explicit user-chosen crop against current field conditions.
+
+        Returns a structured report covering:
+            - feasibility (HIGH / MEDIUM / LOW / INFEASIBLE)
+            - parameter-wise deficits (NPK, pH, EC, rainfall, temperature)
+            - actionable fixes (urea/DAP/MOP, lime/sulphur, irrigation, shading)
+            - yield-maximisation tips (agronomy + rotation)
+
+        This is the core of the "Reverse Recommendation" tab: instead of
+        asking *which* crop to grow, the farmer says *I want to grow X* and
+        the engine reports how far off they are and how to close the gap.
+        """
+        from generators.crop_profiles import (
+            ALL_CROPS, CROP_TO_SEASON, CROP_TO_FAMILY,
+            SOIL_CROP_INCOMPATIBLE, EC_SENSITIVE_CROPS, EC_TOLERANT_CROPS,
+            DRAINAGE_TOLERANT_CROPS, DRAINAGE_SENSITIVE_CROPS,
+            REGIONAL_CROP_DOMINANCE,
+        )
+
+        # Locate the crop profile
+        profile = None
+        crop_season = None
+        for s, crops in ALL_CROPS.items():
+            if target_crop in crops:
+                profile = crops[target_crop]
+                crop_season = s
+                break
+        if profile is None:
+            return {"error": f"Crop '{target_crop}' not found in crop profiles."}
+
+        # ── Reuse the amendment helper for NPK gaps & fertilizer math ──
+        amend = CropRecommender.calculate_amendments(
+            target_crop, nitrogen, phosphorus, potassium, field_area_ha,
+        )
+        gap_npk = amend["gap_npk"]
+        ideal_npk = amend["ideal_npk"]
+
+        # ── pH gap ──
+        ph_lo, ph_hi = profile.get("ph_range", (6.0, 7.5))
+        ph_fix = None
+        if ph < ph_lo:
+            ph_delta = round(ph_lo - ph, 2)
+            # ~2 t/ha lime raises pH by ~0.5 on most soils
+            lime_t = round(ph_delta / 0.5 * 2.0 * field_area_ha, 2)
+            ph_fix = (f"Soil is too acidic (pH {ph:.2f} < target {ph_lo}). "
+                      f"Apply ~{lime_t} t of agricultural lime for {field_area_ha} ha "
+                      f"and re-test after 6 weeks.")
+        elif ph > ph_hi:
+            ph_delta = round(ph - ph_hi, 2)
+            sulphur_kg = round(ph_delta / 0.5 * 500 * field_area_ha, 1)
+            ph_fix = (f"Soil is too alkaline (pH {ph:.2f} > target {ph_hi}). "
+                      f"Apply ~{sulphur_kg} kg elemental sulphur or gypsum for "
+                      f"{field_area_ha} ha; add organic compost to buffer.")
+
+        # ── EC (salinity) gap ──
+        ec_limit = EC_SENSITIVE_CROPS.get(target_crop,
+                                          EC_TOLERANT_CROPS.get(target_crop, 3000))
+        ec_fix = None
+        if ec > ec_limit:
+            ec_fix = (f"Salinity is high (EC {ec:.0f} > tolerance {ec_limit} μS/cm). "
+                      f"Leach salts with 1–2 heavy irrigations on a good-drainage "
+                      f"plot, apply gypsum 1 t/ha if sodic, and add organic mulch.")
+
+        # ── Rainfall / irrigation gap ──
+        rain_lo, rain_hi = profile.get("rainfall_mm", (400, 1200))
+        rain_fix = None
+        if rainfall < rain_lo:
+            deficit = round(rain_lo - rainfall, 0)
+            rain_fix = (f"Rainfall is insufficient ({rainfall:.0f} < {rain_lo} mm). "
+                        f"Plan supplemental irrigation of ~{deficit} mm "
+                        f"(≈ {deficit * 10 * field_area_ha:.0f} kL for "
+                        f"{field_area_ha} ha) across the season.")
+        elif rainfall > rain_hi:
+            excess = round(rainfall - rain_hi, 0)
+            rain_fix = (f"Rainfall is excessive ({rainfall:.0f} > {rain_hi} mm). "
+                        f"Improve field drainage (ridges/furrows) to shed ~{excess} mm "
+                        f"and avoid waterlogging diseases.")
+
+        # ── Temperature gap ──
+        t_lo, t_hi = profile.get("temp_range", (15, 35))
+        temp_fix = None
+        if weather_temp < t_lo:
+            temp_fix = (f"Ambient temperature {weather_temp:.1f}°C is below the "
+                        f"crop optimum ({t_lo}–{t_hi}°C). Delay sowing to a warmer "
+                        f"window or use poly-mulch to raise soil temperature.")
+        elif weather_temp > t_hi:
+            temp_fix = (f"Ambient temperature {weather_temp:.1f}°C exceeds the "
+                        f"crop optimum ({t_lo}–{t_hi}°C). Shift to early sowing, "
+                        f"use shade-nets for seedlings, and irrigate at dawn.")
+
+        # ── Soil-type incompatibility ──
+        soil_fix = None
+        soil_ok = True
+        incompatible = set(SOIL_CROP_INCOMPATIBLE.get(soil_type, []))
+        if target_crop in incompatible:
+            soil_ok = False
+            affinity = profile.get("soil_affinity", [])
+            soil_fix = (f"'{target_crop}' is agronomically unsuited for "
+                        f"{soil_type} soil. It performs best on "
+                        f"{', '.join(affinity) or 'well-drained loamy soils'}. "
+                        f"Consider raised beds with imported topsoil, or pick "
+                        f"an alternative crop.")
+
+        # ── Drainage check ──
+        drainage_fix = None
+        is_poor_drainage = drainage in ("Poor", "Very Poor")
+        if is_poor_drainage and target_crop in DRAINAGE_SENSITIVE_CROPS:
+            drainage_fix = (f"{target_crop} needs well-drained soil but the field "
+                            f"has {drainage.lower()} drainage. Build raised beds "
+                            f"(15–20 cm) with lateral drains every 6–8 m, or "
+                            f"choose a tolerant crop "
+                            f"({', '.join(sorted(DRAINAGE_TOLERANT_CROPS))}).")
+
+        # ── Regional fit (positive signal) ──
+        regional_note = None
+        zone_crops = REGIONAL_CROP_DOMINANCE.get(agro_zone, {}).get(crop_season, {})
+        if target_crop in zone_crops:
+            w = zone_crops[target_crop]
+            if w >= 2.0:
+                regional_note = f"{target_crop} is a primary staple of {agro_zone}."
+            elif w >= 1.5:
+                regional_note = f"{target_crop} is commonly grown in {agro_zone}."
+
+        # ── Aggregate feasibility score ──
+        # Start at 100, subtract per blocking issue.
+        score = 100
+        blockers = []
+        if not soil_ok:
+            score -= 50; blockers.append("soil_incompatibility")
+        if drainage_fix:
+            score -= 25; blockers.append("drainage_mismatch")
+        if ph_fix:
+            score -= 10; blockers.append("pH_out_of_range")
+        if ec_fix:
+            score -= 10; blockers.append("high_salinity")
+        if rain_fix:
+            score -= 10; blockers.append("water_mismatch")
+        if temp_fix:
+            score -= 10; blockers.append("temperature_mismatch")
+        if any(v > 0 for v in gap_npk.values()):
+            score -= 5; blockers.append("npk_deficit")
+
+        if score >= 85:
+            feasibility = "HIGH"
+        elif score >= 60:
+            feasibility = "MEDIUM"
+        elif score >= 30:
+            feasibility = "LOW"
+        else:
+            feasibility = "INFEASIBLE"
+
+        # ── Yield-maximisation tips ──
+        family = CROP_TO_FAMILY.get(target_crop, "")
+        yield_tips = [
+            f"Target plant population: follow state package-of-practices for {target_crop}.",
+            "Split-apply nitrogen (25% basal, 50% at tillering, 25% at flowering) "
+            "to match crop demand and cut leaching losses.",
+            "Apply farmyard manure 5–10 t/ha before sowing to improve soil "
+            "structure and micronutrient availability.",
+            f"Rotate with a different family next season (current: {family or 'Unknown'}) "
+            "— legumes after cereals, cereals after legumes.",
+            "Scout weekly for pests; use IPM thresholds before chemical sprays.",
+        ]
+        if target_crop in ("Rice", "Sugarcane"):
+            yield_tips.append("Maintain 2–5 cm standing water through tillering; "
+                              "drain 7–10 days before harvest.")
+        if target_crop in ("Cotton", "Maize"):
+            yield_tips.append("Use drip + fertigation to lift yield 15–20% over "
+                              "flood irrigation on clay/black soils.")
+
+        # ── Assemble the fix list (ordered by priority) ──
+        fixes = []
+        if soil_fix:      fixes.append({"type": "soil",      "action": soil_fix})
+        if drainage_fix:  fixes.append({"type": "drainage",  "action": drainage_fix})
+        if ph_fix:        fixes.append({"type": "pH",        "action": ph_fix})
+        if ec_fix:        fixes.append({"type": "salinity",  "action": ec_fix})
+        if rain_fix:      fixes.append({"type": "water",     "action": rain_fix})
+        if temp_fix:      fixes.append({"type": "temperature","action": temp_fix})
+        for nutr, gap in gap_npk.items():
+            if gap > 0:
+                fert = {"N": "Urea", "P": "DAP", "K": "MOP"}[nutr]
+                kg = amend["fertilizer_kg_per_ha"][fert]
+                fixes.append({
+                    "type": f"nutrient_{nutr}",
+                    "action": (f"{nutr} deficit {gap:.0f} mg/kg — apply "
+                               f"~{kg} kg {fert}/ha "
+                               f"(~{round(kg * field_area_ha, 1)} kg for "
+                               f"{field_area_ha} ha)."),
+                })
+
+        return {
+            "target_crop": target_crop,
+            "crop_season": crop_season,
+            "crop_family": family,
+            "feasibility": feasibility,
+            "feasibility_score": score,
+            "blockers": blockers,
+            "current": {
+                "N": nitrogen, "P": phosphorus, "K": potassium,
+                "ph": ph, "ec": ec,
+                "soil_type": soil_type, "drainage": drainage,
+                "rainfall": rainfall, "temperature": weather_temp,
+            },
+            "ideal": {
+                "N": ideal_npk["N"], "P": ideal_npk["P"], "K": ideal_npk["K"],
+                "ph_range": list(profile.get("ph_range", (6.0, 7.5))),
+                "ec_limit": ec_limit,
+                "rainfall_mm": list(profile.get("rainfall_mm", (400, 1200))),
+                "temp_range": list(profile.get("temp_range", (15, 35))),
+                "soil_affinity": profile.get("soil_affinity", []),
+            },
+            "gap_npk": gap_npk,
+            "fertilizer_kg_per_ha": amend["fertilizer_kg_per_ha"],
+            "total_for_field": amend["total_for_field"],
+            "fixes": fixes,
+            "yield_tips": yield_tips,
+            "regional_note": regional_note,
+        }
+
+    # ──────────────────────────────────────────────────────────────
+    # T8 - Crop Decision Engine
+    # ──────────────────────────────────────────────────────────────
+    @classmethod
+    def evaluate_crop_decision(cls, target_crop: str, **kwargs) -> dict:
+        """
+        Evaluate a target crop decision with comprehensive scoring, yield
+        estimation, and a 4-phase action plan.
+        """
+        # Run the basic reverse recommendation to get gaps and fixes
+        rev = cls.calculate_reverse_recommendation(
+            target_crop=target_crop,
+            nitrogen=kwargs.get("nitrogen", 0),
+            phosphorus=kwargs.get("phosphorus", 0),
+            potassium=kwargs.get("potassium", 0),
+            ph=kwargs.get("ph", 7.0),
+            ec=kwargs.get("ec", 0),
+            soil_type=kwargs.get("soil_type", "Alluvial"),
+            drainage=kwargs.get("drainage", "Moderate"),
+            rainfall=kwargs.get("rainfall", 0),
+            weather_temp=kwargs.get("weather_temp", 25.0),
+            agro_zone=kwargs.get("agro_zone", ""),
+            field_area_ha=kwargs.get("field_area_ha", 1.0)
+        )
+
+        if "error" in rev:
+            return rev
+
+        try:
+            from generators.crop_profiles import CROP_YIELD_BENCHMARKS, CROP_MSP, CROP_AGRONOMY
+        except ImportError:
+            CROP_YIELD_BENCHMARKS = {}
+            CROP_MSP = {}
+            CROP_AGRONOMY = {}
+
+        benchmarks = CROP_YIELD_BENCHMARKS.get(target_crop, {
+            "max_t_ha": 5.0, "avg_t_ha": 2.0, "unit": "t/ha", "duration_days": 120
+        })
+        msp = CROP_MSP.get(target_crop, 20000)
+        agronomy = CROP_AGRONOMY.get(target_crop, {
+            "sow_months": [6, 7], "harvest_months": [10, 11],
+            "seed_rate": "Standard", "spacing": "Standard",
+            "irrigation_count": "As required", "irrigation_mm": 50,
+            "pest_watch": ["General pests"],
+            "fert_splits": ["Basal and Top dressing"], "next_crop": "Legumes"
+        })
+
+        # Calculate Component Scores (out of 100)
+        gap_npk = rev.get("gap_npk", {})
+        ideal = rev.get("ideal", {})
+        npk_total_ideal = ideal.get("N", 0) + ideal.get("P", 0) + ideal.get("K", 0)
+        npk_total_gap = (gap_npk.get("N", 0) + gap_npk.get("P", 0) + gap_npk.get("K", 0))
+        npk_score = int(max(0, 100 - (npk_total_gap / max(1, npk_total_ideal)) * 100)) if npk_total_ideal > 0 else 100
+        
+        blockers = rev.get("blockers", [])
+        soil_score = 95 if not any("Soil" in b for b in blockers) else 40
+        water_score = 90 if not any("Rainfall" in b for b in blockers) else 50
+        climate_score = 90 if not any("Temperature" in b for b in blockers) else 50
+        
+        # Determine composite
+        base_score = rev.get("feasibility_score", 50)
+        composite_score = int((npk_score + soil_score + water_score + climate_score + base_score) / 5)
+
+        # Decision
+        if composite_score >= 75:
+            decision = "GO"
+            label = "✅ Recommended"
+        elif composite_score >= 50:
+            decision = "CAUTION"
+            label = "⚠️ Conditional"
+        elif composite_score >= 30:
+            decision = "HIGH RISK"
+            label = "🔶 Not advised"
+        else:
+            decision = "NO-GO"
+            label = "❌ Not feasible"
+
+        # Yield & Financials
+        area_ha = kwargs.get("field_area_ha", 1.0)
+        max_y = benchmarks["max_t_ha"]
+        est_y = round(max_y * (composite_score / 100), 2)
+        yield_gap = round(max_y - est_y, 2)
+        est_revenue = int(est_y * msp * area_ha)
+
+        # Action Plan
+        fixes_text = str(rev.get("fixes", [])).lower()
+        phase1 = ["Apply basal fertilizer based on gap analysis"]
+        if "lime" in fixes_text: phase1.append("Apply Lime to correct acidic soil 15 days before sowing")
+        if "gypsum" in fixes_text: phase1.append("Apply Gypsum to correct soil EC")
+        
+        phase2 = [
+            f"Seed Rate: {agronomy['seed_rate']}",
+            f"Spacing: {agronomy['spacing']}",
+            f"Optimal Sowing Window: Months {agronomy['sow_months']}"
+        ]
+        
+        phase3 = [
+            f"Irrigation: {agronomy['irrigation_count']} applications ({agronomy['irrigation_mm']}mm each)",
+            f"Fertilizer Splits: {', '.join(agronomy['fert_splits'])}",
+            f"Pest Watch: Monitor for {', '.join(agronomy['pest_watch'])}"
+        ]
+        
+        phase4 = [
+            f"Expected Harvest Window: Months {agronomy['harvest_months']}",
+            f"Next crop in rotation: {agronomy['next_crop']}"
+        ]
+
+        # Risk Factors
+        risks = [{"risk": b.replace('_', ' '), "mitigation": "See actionable fixes"} for b in blockers]
+        if npk_score < 70:
+            risks.append({"risk": "Severe Nutrient Deficit", "mitigation": "Apply full recommended NPK doses"})
+
+        return {
+            "decision": decision,
+            "label": label,
+            "composite_score": composite_score,
+            "scores": {
+                "npk": npk_score,
+                "soil": soil_score,
+                "water": water_score,
+                "climate": climate_score,
+                "base_feasibility": base_score
+            },
+            "yield_estimate": {
+                "max_potential": max_y,
+                "estimated": est_y,
+                "gap": yield_gap,
+                "unit": benchmarks["unit"]
+            },
+            "financials": {
+                "msp_per_t": msp,
+                "estimated_revenue_inr": est_revenue
+            },
+            "action_plan": {
+                "phase1_pre_sowing": phase1,
+                "phase2_sowing": phase2,
+                "phase3_growth": phase3,
+                "phase4_harvest": phase4
+            },
+            "risks": risks,
+            "base_report": rev
+        }
 
 def demo():
     """Run a quick demo with sample inputs."""

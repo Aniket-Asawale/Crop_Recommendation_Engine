@@ -1,8 +1,13 @@
 """
-Location Generator — Defines 100 agricultural locations across India.
-Distribution: 85 Maharashtra (taluka-level) + 15 Rest of India.
+Location Generator — Defines ~300 agricultural locations across Maharashtra.
 
-Generates: data/synthetic/locations_100.json
+v2026_05 scope change: the dataset is now Maharashtra-only. The 85 hand-curated
+MH seed locations are procedurally expanded to ~300 by perturbing lat/lon and
+irrigation mix around each seed, yielding per-sub-zone density of 45–75 points.
+Rest-of-India locations are kept in REST_OF_INDIA for optional ablation but are
+NOT included in the default ALL_LOCATIONS export.
+
+Generates: data/datasets/locations_100.json
 
 Each location includes:
   - location_id, city, district, state, agro_zone
@@ -13,12 +18,46 @@ Each location includes:
 """
 
 import json
-import os
+import random
 from pathlib import Path
 
 # Output path
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "synthetic"
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "datasets"
 OUTPUT_FILE = OUTPUT_DIR / "locations_100.json"
+
+# ─── Location expansion parameters ───
+# Target total MH locations after procedural expansion around seeds.
+TARGET_TOTAL_LOCATIONS = 300
+EXPANSION_SEED = 42
+# Per-sub-zone density targets (sum ≈ TARGET_TOTAL_LOCATIONS)
+ZONE_TARGETS = {
+    "Vidarbha":            75,
+    "Marathwada":          60,
+    "Western Maharashtra": 65,
+    "Konkan":              50,
+    "North Maharashtra":   50,
+}
+# Lat/lon jitter (degrees) applied to seed locations during expansion.
+# 0.15° ≈ 16 km — stays within the same taluka/district cluster.
+JITTER_LAT = 0.15
+JITTER_LON = 0.18
+# Altitude jitter (m) — same local terrain band.
+JITTER_ALT = 40
+# Probability a synthetic location adopts irrigation (independent of seed)
+IRRIGATION_PROB_BY_ZONE = {
+    "Vidarbha":            0.20,
+    "Marathwada":          0.18,
+    "Western Maharashtra": 0.62,
+    "Konkan":              0.15,
+    "North Maharashtra":   0.45,
+}
+WATER_SOURCES_BY_IRR = {
+    "Vidarbha":            ["canal", "borewell", "well"],
+    "Marathwada":          ["borewell", "well"],
+    "Western Maharashtra": ["canal", "canal", "borewell", "well"],
+    "Konkan":              ["well", "tank"],
+    "North Maharashtra":   ["canal", "borewell"],
+}
 
 # ─── Soil texture & drainage mappings ───
 SOIL_PROPERTIES = {
@@ -202,12 +241,103 @@ REST_OF_INDIA = [
 ]
 
 
-# ─── Combine all regions ───
-ALL_LOCATIONS = VIDARBHA + MARATHWADA + WESTERN_MH + KONKAN + NORTH_MH + REST_OF_INDIA
+# ─── MH-only seed set (hand-curated 85 locations) ───
+MH_SEEDS = VIDARBHA + MARATHWADA + WESTERN_MH + KONKAN + NORTH_MH
+
+
+def _zone_prefix(zone: str) -> str:
+    """Zone → ID prefix used for synthetic locations."""
+    return {
+        "Vidarbha":            "MH-VID",
+        "Marathwada":          "MH-MTH",
+        "Western Maharashtra": "MH-WST",
+        "Konkan":              "MH-KNK",
+        "North Maharashtra":   "MH-NTH",
+    }.get(zone, "MH-UNK")
+
+
+def _perturb_seed(seed: dict, synthetic_idx: int, rng: random.Random) -> dict:
+    """Produce one synthetic location by jittering a seed (lat/lon/alt/irrigation).
+
+    Soil type and agro_zone are preserved (they are inherent to the district).
+    Drainage is re-sampled from the SOIL_PROPERTIES entry so that synthetic
+    points vary in sub-type (e.g. Deep vs Medium Black) around the parent.
+    """
+    zone = seed["agro_zone"]
+    soil_type = seed["soil_type"]
+    # Re-sample subtype for Black (Regur) so Deep/Medium/Shallow are diverse
+    if soil_type == "Black (Regur)":
+        subtype = rng.choice(["Deep", "Medium", "Shallow"])
+    else:
+        subtype = seed.get("soil_subtype", "")
+
+    # Irrigation: bias per-zone, but respect if seed is strongly irrigated
+    irr_prob = IRRIGATION_PROB_BY_ZONE.get(zone, 0.25)
+    # Seeds already marked irrigated stay irrigated with 80% probability
+    if seed.get("irrigation_available", 0) == 1:
+        irrigated = int(rng.random() < 0.80)
+    else:
+        irrigated = int(rng.random() < irr_prob)
+    if irrigated:
+        ws_pool = WATER_SOURCES_BY_IRR.get(zone, ["borewell"])
+        water_source = rng.choice(ws_pool)
+    else:
+        water_source = "rainfed"
+
+    lat = round(seed["lat"] + rng.uniform(-JITTER_LAT, JITTER_LAT), 4)
+    lon = round(seed["lon"] + rng.uniform(-JITTER_LON, JITTER_LON), 4)
+    alt = max(3, int(seed["altitude_m"] + rng.randint(-JITTER_ALT, JITTER_ALT)))
+    loc_id = f"{_zone_prefix(zone)}-S{synthetic_idx:03d}"
+    city = f"{seed['city']}-Satellite-{synthetic_idx:03d}"
+    return _loc(
+        loc_id, city, seed["district"], seed["state"], zone,
+        lat, lon, alt, soil_type, subtype,
+        irrigation=irrigated, water_source=water_source,
+    )
+
+
+def _expand_zone(seeds: list[dict], target: int, rng: random.Random,
+                 idx_start: int) -> tuple[list[dict], int]:
+    """Expand a zone from its seed list up to `target` locations."""
+    expanded = list(seeds)
+    needed = max(0, target - len(seeds))
+    idx = idx_start
+    # Distribute synthetic points evenly across seeds
+    if needed > 0 and seeds:
+        per_seed = needed // len(seeds)
+        remainder = needed - per_seed * len(seeds)
+        for s_i, seed in enumerate(seeds):
+            n_local = per_seed + (1 if s_i < remainder else 0)
+            for _ in range(n_local):
+                expanded.append(_perturb_seed(seed, idx, rng))
+                idx += 1
+    return expanded, idx
+
+
+def _build_mh_locations() -> list[dict]:
+    """Build the full ~300-location MH set by expanding seed zones."""
+    rng = random.Random(EXPANSION_SEED)
+    all_loc: list[dict] = []
+    idx = 1
+    zone_seeds = {
+        "Vidarbha":            VIDARBHA,
+        "Marathwada":          MARATHWADA,
+        "Western Maharashtra": WESTERN_MH,
+        "Konkan":               KONKAN,
+        "North Maharashtra":    NORTH_MH,
+    }
+    for zone, target in ZONE_TARGETS.items():
+        zone_locs, idx = _expand_zone(zone_seeds[zone], target, rng, idx)
+        all_loc.extend(zone_locs)
+    return all_loc
+
+
+# ─── Default export: Maharashtra-only, ~300 locations ───
+ALL_LOCATIONS = _build_mh_locations()
 
 
 def generate_locations_json() -> list[dict]:
-    """Generate locations_100.json and return the list."""
+    """Generate locations_100.json (MH-only expanded set) and return the list."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     locations = ALL_LOCATIONS
@@ -216,11 +346,13 @@ def generate_locations_json() -> list[dict]:
     # Distribution summary
     regions = {}
     soil_types = {}
+    irr_count = 0
     for loc in locations:
         zone = loc["agro_zone"]
         soil = loc["soil_type"]
         regions[zone] = regions.get(zone, 0) + 1
         soil_types[soil] = soil_types.get(soil, 0) + 1
+        irr_count += loc.get("irrigation_available", 0)
 
     print("\n── Region Distribution ──")
     for zone, count in sorted(regions.items(), key=lambda x: -x[1]):
@@ -234,6 +366,7 @@ def generate_locations_json() -> list[dict]:
     # Maharashtra count
     mh_count = sum(1 for loc in locations if loc["state"] == "Maharashtra")
     print(f"\nMaharashtra locations: {mh_count}/{len(locations)} ({mh_count/len(locations)*100:.0f}%)")
+    print(f"Irrigated locations:  {irr_count}/{len(locations)} ({irr_count/len(locations)*100:.0f}%)")
 
     # Write JSON
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:

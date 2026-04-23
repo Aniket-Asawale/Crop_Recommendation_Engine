@@ -6,6 +6,9 @@ Endpoints:
     POST /predict/live       — Prediction with auto-fetched weather
     POST /rotation           — Full-year rotation plan (Kharif→Rabi→Zaid)
     POST /amendments         — Fertilizer amendment calculator
+    POST /reverse            — Reverse recommendation: user picks a target
+                               crop; engine reports feasibility, deficits,
+                               fixes, and yield tips.
     GET  /weather            — Fetch live weather for a lat/lon
     GET  /health             — Health check + model info
     GET  /crops              — List all supported crops & profiles
@@ -154,6 +157,22 @@ class AmendmentRequest(BaseModel):
     field_area_ha: float = Field(1.0, gt=0, description="Field area in hectares")
 
 
+class ReverseRequest(BaseModel):
+    """Reverse recommendation — evaluate a user-chosen target crop."""
+    target_crop: str = Field(..., description="Target crop the farmer wants to grow")
+    nitrogen: float = Field(..., ge=0, le=500)
+    phosphorus: float = Field(..., ge=0, le=300)
+    potassium: float = Field(..., ge=0, le=500)
+    ph: float = Field(..., ge=3.0, le=10.0)
+    ec: float = Field(..., ge=0, le=20000)
+    soil_type: str
+    drainage: str
+    rainfall: float = Field(..., ge=0, le=5000, description="Seasonal rainfall (mm)")
+    weather_temp: float = Field(..., ge=-5, le=55, description="Ambient air temperature (°C)")
+    agro_zone: Optional[str] = Field("", description="e.g. 'Vidarbha'")
+    field_area_ha: float = Field(1.0, gt=0)
+
+
 
 
 # ─── Endpoints ───
@@ -264,6 +283,69 @@ def amendments(req: AmendmentRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Amendment calc failed: {exc}")
+
+
+@app.post("/reverse")
+def reverse_recommendation(req: ReverseRequest):
+    """Evaluate a user-chosen target crop against current field conditions.
+
+    Returns feasibility score, NPK/pH/EC/rainfall/temperature deficits,
+    specific actionable fixes, and yield-maximisation tips — exactly the
+    questions the farmer might otherwise ask an online LLM.
+    """
+    try:
+        result = CropRecommender.calculate_reverse_recommendation(
+            target_crop=req.target_crop,
+            nitrogen=req.nitrogen,
+            phosphorus=req.phosphorus,
+            potassium=req.potassium,
+            ph=req.ph,
+            ec=req.ec,
+            soil_type=req.soil_type,
+            drainage=req.drainage,
+            rainfall=req.rainfall,
+            weather_temp=req.weather_temp,
+            agro_zone=req.agro_zone or "",
+            field_area_ha=req.field_area_ha,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return _json_response(result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Reverse recommendation failed: {exc}")
+
+
+@app.post("/decide")
+def evaluate_decision(req: ReverseRequest):
+    """Evaluate a user-chosen target crop decision.
+
+    Returns a full decision report including feasibility score, yield estimate,
+    financial projections, and a 4-phase action plan.
+    """
+    try:
+        result = CropRecommender.evaluate_crop_decision(
+            target_crop=req.target_crop,
+            nitrogen=req.nitrogen,
+            phosphorus=req.phosphorus,
+            potassium=req.potassium,
+            ph=req.ph,
+            ec=req.ec,
+            soil_type=req.soil_type,
+            drainage=req.drainage,
+            rainfall=req.rainfall,
+            weather_temp=req.weather_temp,
+            agro_zone=req.agro_zone or "",
+            field_area_ha=req.field_area_ha,
+        )
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return _json_response(result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Crop decision evaluation failed: {exc}")
 
 
 @app.get("/weather")

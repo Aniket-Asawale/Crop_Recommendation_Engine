@@ -1,58 +1,84 @@
 ======================================================================
-MODEL VISUALIZATION REPORT
+MODEL VISUALIZATION REPORT  (stamp=2026_05)
 ======================================================================
 
-[1] Feature Importance (Top 20)
-    Saved: evaluation/feature_importance.png
-     1. P_x_K                          0.0820
-     2. N_x_K                          0.0634
-     3. N_x_P                          0.0595
-     4. sensor_nitrogen                0.0569
-     5. sensor_ph                      0.0538
-     6. sensor_phosphorus              0.0535
-     7. sensor_potassium               0.0529
-     8. npk_ratio_n                    0.0464
-     9. soil_drainage_ordinal          0.0460
-    10. drainage_class_encoded         0.0412
+  Test rows:  16800
+  Classes:    34 (['Bajra', 'Banana', 'Black Gram', 'Brinjal', 'Cashew']…)
 
-[2] Confusion Matrix
+  Calibration method: isotonic  temperature: 1.000
+
+[1] Feature Importance (Top 20 — RF base learner)
+    Saved: evaluation/feature_importance.png
+     1. P_x_K                               0.0611
+     2. N_x_P                               0.0537
+     3. N_x_K                               0.0526
+     4. sensor_potassium                    0.0475
+     5. sensor_phosphorus                   0.0430
+     6. sensor_ph                           0.0421
+     7. sensor_nitrogen                     0.0421
+     8. drainage_class_encoded              0.0392
+     9. soil_drainage_ordinal               0.0389
+    10. is_season_Annual                    0.0385
+
+[2] Confusion Matrix (normalized rows, 34-class)
     Saved: evaluation/confusion_matrix.png
 
 [3] Per-class Accuracy
     Saved: evaluation/per_class_accuracy.png
-    Bajra                 83.7%  [LOW]
-    Black Gram            86.5%  [OK]
-    Brinjal              100.0%  [HIGH]
-    Chickpea (Gram)       88.1%  [OK]
-    Chilli                99.4%  [HIGH]
-    Cotton                90.9%  [OK]
-    Grape                 95.7%  [HIGH]
-    Green Gram            85.9%  [OK]
-    Groundnut             77.8%  [LOW]
-    Jowar (Kharif)        80.4%  [LOW]
-    Lentil                82.5%  [LOW]
-    Linseed               85.4%  [OK]
-    Maize                 63.5%  [LOW]
-    Okra                  98.5%  [HIGH]
-    Onion                 87.3%  [OK]
-    Pigeonpea (Tur)       88.5%  [OK]
-    Rabi Jowar            73.7%  [LOW]
-    Rice                  83.3%  [LOW]
-    Safflower             65.8%  [LOW]
-    Sesame                59.4%  [LOW]
-    Soybean               96.9%  [HIGH]
-    Sugarcane             97.9%  [HIGH]
-    Sunflower             76.7%  [LOW]
-    Tomato                98.6%  [HIGH]
-    Turmeric              83.1%  [LOW]
-    Wheat                 56.2%  [LOW]
+    Bajra                      95.1%  support= 225  [HIGH]
+    Banana                     98.9%  support=  87  [HIGH]
+    Black Gram                 96.1%  support= 538  [HIGH]
+    Brinjal                   100.0%  support=1649  [HIGH]
+    Cashew                    100.0%  support=  42  [HIGH]
+    Chickpea (Gram)            99.2%  support=1904  [HIGH]
+    Chilli                    100.0%  support=  57  [HIGH]
+    Coconut                   100.0%  support=  80  [HIGH]
+    Coriander                  92.6%  support=  27  [OK]
+    Cotton                    100.0%  support= 707  [HIGH]
+    Grape                      99.2%  support= 385  [HIGH]
+    Green Gram                100.0%  support=  12  [HIGH]
+    Groundnut                 100.0%  support=   7  [HIGH]
+    Jowar (Kharif)             99.3%  support= 300  [HIGH]
+    Lentil                     98.3%  support= 358  [HIGH]
+    Linseed                    77.6%  support=  58  [LOW]
+    Maize                     100.0%  support=  81  [HIGH]
+    Mango                      95.5%  support= 376  [HIGH]
+    Mustard                    93.3%  support= 105  [OK]
+    Okra                      100.0%  support= 188  [HIGH]
+    Onion                      95.2%  support= 751  [HIGH]
+    Pigeonpea (Tur)            99.4%  support= 473  [HIGH]
+    Pomegranate                99.8%  support=1101  [HIGH]
+    Potato                     96.1%  support=  51  [HIGH]
+    Rabi Jowar                 93.8%  support= 211  [OK]
+    Ragi                       84.6%  support=  13  [LOW]
+    Rice                       99.9%  support=2435  [HIGH]
+    Safflower                  75.0%  support=  36  [LOW]
+    Sesame                     98.0%  support= 298  [HIGH]
+    Soybean                    99.9%  support=1211  [HIGH]
+    Sugarcane                 100.0%  support=2129  [HIGH]
+    Sunflower                  91.7%  support=  24  [OK]
+    Tomato                     99.5%  support= 206  [HIGH]
+    Wheat                      97.2%  support= 675  [HIGH]
 
-    Overall Accuracy: 0.8692
-    F1-macro:        0.8409
+    Overall Accuracy: 0.9882
+    F1-macro:        0.9498
 
 [4] Reliability Diagram (Calibration)
     Saved: evaluation/reliability_diagram.png
-    Temperature: 0.589
+    ECE (Before Calibration (Raw)): 0.1053
+    ECE (After Calibration (Isotonic)): 0.0056
+
+[5] Confidence Histogram (raw vs calibrated)
+    Saved: evaluation/confidence_histogram.png
+    Raw  mean confidence: 0.8829
+    Cal. mean confidence: 0.9846
+
+[6] Season-filtered Confusion Matrices
+    Kharif  : n=6300  acc=99.2%  F1=0.971
+    Rabi    : n=4200  acc=97.0%  F1=0.884
+    Zaid    : n=2100  acc=100.0%  F1=0.999
+    Annual  : n=4200  acc=99.4%  F1=0.989
+    Saved: evaluation/season_confusion_matrix.png
 
 ======================================================================
 VISUALIZATION COMPLETE

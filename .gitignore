@@ -52,4 +52,18 @@ build/
 # Specific project files to ignore
 start_crop_cloudflared.bat
 PLAN.md
+<<<<<<< Updated upstream
 models/model_registry/best_hparams.json
+=======
+api.py
+models/model_registry/best_hparams.json
+models/model_registry/training_log.csv
+
+>>>>>>> Stashed changes
+models/model_registry/2026_03/ann_model_2026_03.pt
+/models/model_registry/2026_03
+models/model_registry/2026_03/best_model_2026_03.pkl
+models/model_registry/2026_04/best_model_2026_04.pkl
+/models/model_registry/2026_04
+models/model_registry/2026_03/ann_scaler_2026_03.pkl
+models/model_registry/2026_03/ann_model_2026_03.pt

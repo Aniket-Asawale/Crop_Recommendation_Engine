@@ -1,73 +1,113 @@
-======================================================================
+==============================================================================
 MODEL COMPARISON REPORT — Crop Recommendation Engine
-======================================================================
-Date: 2026-03-26 19:16
-Features: 49 | Classes: 26
-Split: Temporal holdout (Train=2023-2024, Test=2025)
-Training noise: 5% label noise injected for calibration
+==============================================================================
+Date: 2026-04-22 18:38
+Features: 50 | Classes: 34
+Split: grouped by location_id (train 70% / val 15% / test 15%)
+Calibration method: isotonic
+Input jitter: on (std=0.035 of range)
+Label noise rate: 0.00
 
-── Model Rankings (by Accuracy) ──
-Rank  Model                            Accuracy   F1-macro  F1-weighted  Time(s)
----------------------------------------------------------------------------
-1     XGBoost                            0.7987     0.7522       0.7976     28.9
-2     Voting (RF+XGB+LGBM)               0.7983     0.7556       0.7976     56.6
-3     Random Forest                      0.7967     0.7493       0.7957      7.8
-4     LightGBM                           0.7954     0.7524       0.7947     27.2
-5     SVM (RBF)                          0.7450     0.7008       0.7447     20.4
-6     KNN                                0.6508     0.6012       0.6523      0.6
+── Before / After Delta Summary ──
+  metric                           before       after  delta
+  --------------------------------------------------------------
+  test_accuracy                    0.7900      0.9746  +0.1846
+  test_f1_macro                    0.7300      0.8901  +0.1601
+  top3_test_accuracy               0.9200      0.9933  +0.0733
+  ece_val_cal                      0.1500      0.0040  -0.1460
+  mean_prob_cal                    0.6900      0.9813  +0.2913
+  median_displayed_conf            0.1900      0.9813  +0.7913
+  val_test_gap                     0.0000      0.0011  +0.0011
 
-── Best Model: XGBoost ──
-Accuracy:    0.7987
-F1-macro:    0.7522
-F1-weighted: 0.7976
+── Model Rankings (by VAL Accuracy) ──
+Rank  Model                                Train     Val    Test  F1m(V)  F1m(T)  Time(s)
+--------------------------------------------------------------------------------------
+1     Voting (RF+XGB+LGBM)                0.9945  0.9757  0.9746  0.8751  0.8901    179.7
+2     LightGBM                            0.9973  0.9755  0.9737  0.8734  0.8830     51.2
+3     XGBoost                             0.9895  0.9754  0.9741  0.8719  0.8916     67.1
+4     SVM (RBF)                           0.9905  0.9725  0.9741  0.8564  0.8745    185.5
+5     KNN                                 1.0000  0.9505  0.9554  0.7918  0.8024     99.6
+6     Random Forest                       0.9519  0.9368  0.9479  0.7834  0.7861     34.9
 
-── Per-Class Classification Report (Best Model) ──
+── Best Model: Voting (RF+XGB+LGBM) ──
+Train accuracy:   0.9945
+Val   accuracy:   0.9757
+Test  accuracy:   0.9746
+Test  F1-macro:   0.8901
+Test  F1-weighted:0.9753
+
+── Per-Class Classification Report (Test set, calibrated argmax) ──
                  precision    recall  f1-score   support
 
-          Bajra       0.59      0.56      0.57        61
-     Black Gram       0.74      0.87      0.80        69
-        Brinjal       0.99      1.00      0.99       271
-Chickpea (Gram)       0.81      0.81      0.81       140
-         Chilli       0.91      0.83      0.87        36
-         Cotton       0.76      0.61      0.68       128
-          Grape       0.94      0.93      0.93       120
-     Green Gram       0.61      0.61      0.61        33
-      Groundnut       0.64      0.62      0.63        26
- Jowar (Kharif)       0.74      0.69      0.71       149
-         Lentil       0.70      0.62      0.66        71
-        Linseed       0.70      0.80      0.75        79
-          Maize       0.51      0.67      0.58        58
-           Okra       0.89      0.93      0.91        43
-          Onion       0.78      0.68      0.73        90
-Pigeonpea (Tur)       0.94      0.96      0.95       151
-     Rabi Jowar       0.67      0.68      0.67        84
-           Rice       0.85      0.90      0.88       156
-      Safflower       0.58      0.58      0.58        77
-         Sesame       0.69      0.61      0.65       100
-        Soybean       0.80      0.88      0.83       112
-      Sugarcane       0.90      0.87      0.88       139
-      Sunflower       0.66      0.59      0.62        39
-         Tomato       1.00      0.96      0.98        50
-       Turmeric       0.45      0.50      0.47        18
-          Wheat       0.78      0.87      0.82       100
+          Bajra       0.70      0.95      0.80       156
+         Banana       0.86      0.95      0.90        19
+     Black Gram       0.98      0.76      0.86       245
+        Brinjal       1.00      1.00      1.00       735
+         Cashew       0.88      1.00      0.94        22
+Chickpea (Gram)       0.98      1.00      0.99       834
+         Chilli       1.00      0.95      0.97        39
+        Coconut       1.00      1.00      1.00        63
+      Coriander       0.32      0.55      0.40        11
+         Cotton       1.00      1.00      1.00       266
+          Grape       1.00      1.00      1.00       228
+     Green Gram       0.83      0.83      0.83         6
+      Groundnut       0.00      0.00      0.00         0
+ Jowar (Kharif)       0.93      0.97      0.95        97
+         Lentil       0.98      0.97      0.97       244
+        Linseed       0.83      0.58      0.68        26
+          Maize       1.00      0.99      0.99        72
+          Mango       0.98      0.97      0.97       178
+        Mustard       0.56      0.31      0.40        16
+           Okra       0.98      1.00      0.99        81
+          Onion       0.96      0.97      0.97       333
+Pigeonpea (Tur)       1.00      0.98      0.99       250
+    Pomegranate       0.99      0.99      0.99       495
+         Potato       1.00      1.00      1.00         9
+     Rabi Jowar       0.95      0.89      0.92       107
+           Ragi       1.00      0.62      0.77         8
+           Rice       1.00      1.00      1.00      1007
+      Safflower       0.45      0.48      0.47        21
+         Sesame       0.96      0.96      0.96       127
+        Soybean       1.00      1.00      1.00       601
+      Sugarcane       1.00      1.00      1.00       885
+      Sunflower       0.41      0.64      0.50        11
+         Tomato       1.00      1.00      1.00        90
+          Wheat       0.98      0.96      0.97       278
 
-       accuracy                           0.80      2400
-      macro avg       0.75      0.75      0.75      2400
-   weighted avg       0.80      0.80      0.80      2400
+       accuracy                           0.98      7560
+      macro avg       0.87      0.86      0.86      7560
+   weighted avg       0.98      0.98      0.98      7560
 
 
-── Probability Calibration (Temperature Scaling) ──
-  Temperature:           1.058
-  Brier score (raw):     0.01142
-  Brier score (cal):     0.01134
-  Mean P(max) raw:       0.8461
-  Mean P(max) cal:       0.8309
-  % over 0.99 (raw):     16.1%
-  % over 0.99 (cal):     10.5%
-  % uncertain (raw):     13.9% (<0.6)
-  % uncertain (cal):     16.0% (<0.6)
+── Extended Test Metrics (calibrated argmax) ──
+  Top-1 accuracy:         0.9755
+  Top-3 accuracy:         0.9933
+  Top-5 accuracy:         0.9946
+  Balanced accuracy:      0.8863
+  Cohen kappa:            0.9736
+  Matthews CorrCoef:      0.9736
+
+── Probability Calibration (isotonic) ──
+  Temperature:            1.000
+  Brier score (test raw): 0.00159
+  Brier score (test cal): 0.00108
+  ECE (val,  cal):        0.0040
+  ECE (test, raw):        0.0958
+  ECE (test, cal):        0.0073
+  Mean P(max) raw:        0.8788
+  Mean P(max) cal:        0.9813
+  % over 0.99 (raw/cal):  0.4% / 80.2%
+  % uncertain (raw/cal):  2.7% / 0.8% (<0.6)
+
+── Anti-Overfitting Gates ──
+  Train–Val  gap: +0.0188  (max 0.06)  → OK
+  Val–Test  gap: +0.0011  (max 0.04)  → OK
+
+── Split-Conformal Prediction ──
+  alpha: 0.10  (target 90% marginal coverage)
+  quantile: 0.0307  |  n_cal: 7560
+  empirical val coverage: 0.902
 
 ── Confidence Thresholds ──
   HIGH confidence:       >= 0.75
-  UNCERTAIN threshold:   < 0.6
-  Crops below UNCERTAIN threshold are flagged for manual review.
+  UNCERTAIN threshold:   <  0.6

@@ -36,7 +36,7 @@ The dashboard will be available at **http://127.0.0.1:8501**
 
 Run these commands **in order** if you need to regenerate data or retrain the model.
 
-### 3. Regenerate Synthetic Dataset
+### 3. Generate Dataset
 
 ```bash
 cd Crop_Recommendation_Engine
@@ -44,7 +44,7 @@ python generators/regenerate_all.py
 ```
 
 This generates ~7200 rows across all agro-zones and merges them into
-`data/synthetic/crop_recommendation_dataset.csv`.
+`data/datasets/crop_recommendation_dataset.csv`.
 
 ### 4. Run Preprocessing Pipeline
 

@@ -6,8 +6,8 @@ Usage:
   1. Set API key(s): GROQ_API_KEY, GEMINI_API_KEY, and/or MISTRAL_API_KEY
   2. python Crop_Recommendation_Engine/generators/crop_label_validator.py
 
-Reads:  data/synthetic/crop_recommendation_dataset.csv
-Writes: data/synthetic/crop_recommendation_dataset.csv (updated in-place)
+Reads:  data/datasets/crop_recommendation_dataset.csv
+Writes: data/datasets/crop_recommendation_dataset.csv (updated in-place)
         data/processed/llm_validation_report.txt
 """
 
@@ -32,7 +32,7 @@ for _env_file in [_ROOT / ".global_env", _ROOT / "AgroSensor" / ".env"]:
                         os.environ[_key.strip()] = _val
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data" / "synthetic"
+DATA_DIR = BASE_DIR / "data" / "datasets"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 CSV_PATH = DATA_DIR / "crop_recommendation_dataset.csv"
 REPORT_PATH = PROCESSED_DIR / "llm_validation_report.txt"

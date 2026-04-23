@@ -5,7 +5,7 @@ import glob
 import os
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "synthetic"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "datasets"
 
 
 def merge_and_validate():
@@ -108,22 +108,21 @@ def merge_and_validate():
         print(f"  ❌ {empty_crops} rows with empty crop_label")
         errors += empty_crops
 
-    # Check 3: Season-crop consistency
-    season_crops_map = {
-        "Kharif": {"Soybean", "Cotton", "Jowar (Kharif)", "Bajra", "Maize", "Rice",
-                   "Groundnut", "Sugarcane", "Pigeonpea (Tur)", "Green Gram", "Sesame",
-                   "Turmeric", "Black Gram"},
-        "Rabi": {"Wheat", "Chickpea (Gram)", "Rabi Jowar", "Sunflower", "Linseed",
-                 "Safflower", "Onion", "Grape", "Lentil"},
-        "Zaid": {"Okra", "Tomato", "Chilli", "Brinjal"},
-    }
-    season_mismatches = 0
-    for r in all_rows:
-        valid_crops = season_crops_map.get(r["season"], set())
-        if r["crop_label"] not in valid_crops and r["data_quality_flag"] == "clean":
-            season_mismatches += 1
-    if season_mismatches:
-        print(f"  ⚠️  {season_mismatches} season-crop mismatches (in clean rows)")
+    # Check 3: Season-crop consistency (v2026_05: Annual season bypasses K/R/Z)
+    # Pull the authoritative mapping from crop_profiles so we don't drift.
+    try:
+        from generators.crop_profiles import CROP_TO_SEASON
+        season_mismatches = 0
+        for r in all_rows:
+            expected_season = CROP_TO_SEASON.get(r["crop_label"])
+            if (expected_season is not None
+                    and expected_season != r["season"]
+                    and r["data_quality_flag"] == "clean"):
+                season_mismatches += 1
+        if season_mismatches:
+            print(f"  ⚠️  {season_mismatches} season-crop mismatches (in clean rows)")
+    except ImportError:
+        pass
 
     if errors == 0:
         print("  ✅ All sensor values within hardware spec")

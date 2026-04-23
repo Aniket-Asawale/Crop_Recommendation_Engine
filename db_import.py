@@ -19,7 +19,7 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "aniket123")
 DB_NAME = os.getenv("DB_NAME", "agrosensor")
 
-CSV_PATH = Path(__file__).resolve().parent / "data" / "synthetic" / "crop_recommendation_dataset.csv"
+CSV_PATH = Path(__file__).resolve().parent / "data" / "datasets" / "crop_recommendation_dataset.csv"
 TABLE_NAME = "crop_recommendation"
 
 CREATE_TABLE_SQL = f"""

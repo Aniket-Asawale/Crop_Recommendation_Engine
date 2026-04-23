@@ -21,7 +21,7 @@ from sklearn.preprocessing import LabelEncoder
 
 # ─── Paths ───
 BASE_DIR = Path(__file__).resolve().parent
-RAW_CSV = BASE_DIR / "data" / "synthetic" / "crop_recommendation_dataset.csv"
+RAW_CSV = BASE_DIR / "data" / "datasets" / "crop_recommendation_dataset.csv"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -45,7 +45,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.drop_duplicates()
     dupes = initial - len(df)
 
-    # Drop rows with null sensor values (should be 0 for synthetic data)
+    # Drop rows with null sensor values
     sensor_cols = [c for c in df.columns if c.startswith("sensor_")]
     df = df.dropna(subset=sensor_cols)
     nulls = initial - dupes - len(df)
@@ -55,24 +55,24 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalize_crop_labels(df: pd.DataFrame) -> pd.DataFrame:
-    """Step 1b: Normalize noisy crop labels from LLM corrections to canonical names."""
+    """Step 1b: Normalize noisy crop labels from legacy LLM corrections to
+    canonical names.
+
+    The v2026_05 argmax generator already emits canonical names straight from
+    ``crop_profiles.ALL_CROPS``, so the map here only covers legacy synonyms
+    that may still appear if older batch CSVs are merged in. It must NEVER
+    rewrite a canonical crop to a different crop (e.g. Banana→Sugarcane), as
+    that would silently corrupt the target.
+    """
     label_map = {
         "Sorghum": "Jowar (Kharif)",
         "Sorghum (Kharif)": "Jowar (Kharif)",
         "Sorghum (Jowar)": "Jowar (Kharif)",
-        "Sorghum (Kharif) or Bajra": "Bajra",
-        "Cotton or Sorghum (Kharif)": "Cotton",
         "Brinjal (Kharif/Rabi)": "Brinjal",
-        "Okra or Cucumber": "Okra",
-        "Safflower or Wheat": "Safflower",
         "Sugarcane (Kharif)": "Sugarcane",
         "Onion (Rabi)": "Onion",
         "Grape (Perennial/Specialized)": "Grape",
         "Lentil (Rabi)": "Lentil",
-        "Horticulture crops (e.g., Mango, Cashew)": "Cashew",
-        "Vegetables (e.g., Beans, Gourds)": "Okra",
-        "Watermelon": "Green Gram",  # rare Zaid — map to closest Zaid crop
-        "Banana": "Sugarcane",  # rare — map to closest cash crop
     }
     before = df["crop_label"].nunique()
     df["crop_label"] = df["crop_label"].replace(label_map)

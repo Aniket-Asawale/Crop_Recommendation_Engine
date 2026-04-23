@@ -2,10 +2,10 @@
 Streamlit Dashboard for the Crop Recommendation Engine.
 
 Usage:
-    Run the dashboard:
-       streamlit run app.py --server.port 8501
-
-For deployment on Streamlit Cloud, commit the models/ directory and deploy directly.
+    1. Start the API server:
+       cd Crop_Recommendation_Engine && python -c "import uvicorn; uvicorn.run('api:app', host='127.0.0.1', port=8002)"
+    2. Run the dashboard:
+       streamlit run Crop_Recommendation_Engine/app.py --server.port 8501
 """
 
 import json
@@ -14,9 +14,15 @@ import requests
 import folium
 from streamlit_folium import st_folium
 
-from models.inference import CropRecommender
-from generators.crop_profiles import ALL_CROPS, CROP_TO_FAMILY
-from config import CONFIDENCE_HIGH, CONFIDENCE_LOW, MH_LAT_RANGE, MH_LON_RANGE, VALID_SEASONS, VALID_SOIL_TYPES
+import os
+
+# Auto-detect: Streamlit Cloud vs local development
+# On Streamlit Cloud, use the public API gateway URL
+# Locally, use the local gateway
+if os.environ.get("STREAMLIT_SHARING_MODE") or not os.path.exists("venv"):
+    API_BASE = "https://agroaiapp.me/api/crop"
+else:
+    API_BASE = "http://127.0.0.1:8080/api/crop"
 
 # ─── Constants ───
 SOIL_TYPES = [
@@ -32,6 +38,27 @@ MONTH_NAMES = [
     "", "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
 ]
+
+# ─── Build crop list from profiles (single source of truth for T8 tab) ───
+try:
+    import sys, os
+    _engine_dir = os.path.dirname(os.path.abspath(__file__))
+    if _engine_dir not in sys.path:
+        sys.path.insert(0, _engine_dir)
+    from generators.crop_profiles import ALL_CROPS as _ALL_CROPS, CROP_TO_SEASON as _CROP_TO_SEASON
+    # Ordered: Kharif → Rabi → Zaid → Annual
+    ALL_CROPS_GROUPED = {
+        s: sorted(_ALL_CROPS[s].keys()) for s in ["Kharif", "Rabi", "Zaid", "Annual"]
+    }
+    ALL_CROP_NAMES = [
+        crop
+        for season in ["Kharif", "Rabi", "Zaid", "Annual"]
+        for crop in ALL_CROPS_GROUPED[season]
+    ]
+except Exception:
+    # Fallback: static list (will be updated once profiles are importable)
+    ALL_CROPS_GROUPED = {}
+    ALL_CROP_NAMES = ["Soybean", "Cotton", "Wheat", "Rice"]
 
 # Preset locations in Maharashtra
 PRESET_LOCATIONS = {
@@ -55,8 +82,6 @@ AGRO_ZONE_BOUNDS = {
     "Northern Maharashtra":  {"lat": (19.5, 22.0), "lon": (72.5, 76.0)},
 }
 
-# Load model
-recommender = CropRecommender()
 
 def _detect_agro_zone(lat: float, lon: float) -> str:
     """Auto-detect agro zone from coordinates using bounding boxes.
@@ -313,35 +338,17 @@ st.markdown("""
 # ─── API helper ───
 
 
-# ─── Model helper ───
-def _model_call(endpoint, payload=None, params=None):
-    """Call model method and return (success, data_or_error)."""
+# ─── API helper ───
+def _api_call(method, endpoint, payload=None, params=None):
+    """Make API call and return (success, data_or_error)."""
     try:
-        if endpoint == "/predict":
-            data = recommender.predict(**payload)
-        elif endpoint == "/predict/live":
-            data = recommender.predict_with_live_weather(**payload)
-        elif endpoint == "/rotation":
-            data = recommender.plan_rotation(**payload)
-        elif endpoint == "/crops":
-            crops = []
-            for season, season_crops in ALL_CROPS.items():
-                for name in season_crops:
-                    crops.append({
-                        "name": name,
-                        "season": season,
-                        "family": CROP_TO_FAMILY.get(name, "Unknown"),
-                    })
-            data = {"crops": crops, "total": len(crops)}
-        elif endpoint == "/amendments":
-            data = CropRecommender.calculate_amendments(**payload)
-        elif endpoint == "/weather":
-            lat = params["lat"]
-            lon = params["lon"]
-            data = {"lat": lat, "lon": lon, "weather": recommender.fetch_weather(lat, lon)}
+        if method == "GET":
+            r = requests.get(f"{API_BASE}{endpoint}", params=params, timeout=20)
         else:
-            raise ValueError(f"Unknown endpoint {endpoint}")
-        return True, data
+            r = requests.post(f"{API_BASE}{endpoint}", json=payload, timeout=20)
+        if r.status_code == 200:
+            return True, r.json()
+        return False, f"HTTP {r.status_code}: {r.text[:500]}"
     except Exception as e:
         return False, str(e)
 
@@ -350,23 +357,25 @@ def _model_call(endpoint, payload=None, params=None):
 st.title("🌾 Crop Recommendation Engine")
 st.caption("AI-powered crop advisory for Maharashtra, India — powered by a calibrated Random Forest model")
 
-# ── Model health ──
-health = {
-    "status": "healthy",
-    "model_stamp": recommender.model_stamp,
-    "temperature": recommender.temperature,
-    "num_classes": len(recommender.crop_labels),
-    "confidence_thresholds": {
-        "HIGH": f">= {CONFIDENCE_HIGH}",
-        "LOW": f"< {CONFIDENCE_LOW}",
-    },
-    "maharashtra_bounds": {
-        "lat": list(MH_LAT_RANGE),
-        "lon": list(MH_LON_RANGE),
-    },
-    "valid_seasons": sorted(VALID_SEASONS),
-    "valid_soil_types": sorted(VALID_SOIL_TYPES),
-}
+# ── Check API health ──
+health = None
+try:
+    r = requests.get(f"{API_BASE}/health", timeout=5)
+    if r.status_code == 200:
+        health = r.json()
+    else:
+        error_detail = r.json().get('detail', r.text) if r.headers.get('content-type') == 'application/json' else r.text
+        st.error(f"⚠️ **API returned error ({r.status_code}):** {error_detail}")
+        st.info("**Fix:** Ensure API Gateway is running:\n```\ncd ApiGateway\npython main.py\n```")
+        st.stop()
+except Exception as e:
+    st.error("⚠️ **API server not reachable.** Please ensure:")
+    st.code("Terminal 1: keep_tunnel_gateway_alive.bat\nTerminal 2: AgroManager.bat → [1] Start ALL")
+    st.stop()
+
+if not health:
+    st.error("❌ Failed to fetch API health data")
+    st.stop()
 
 
 # ╔══════════════════════════════════════════════════════════════╗
@@ -696,12 +705,13 @@ def _show_full_json(input_params: dict, api_response: dict, label: str = "Crop R
 
 
 # ── Tabs ──
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🎯 Get Recommendation",
     "🌍 Live Weather Prediction",
     "🔄 Yearly Rotation Plan",
     "🧪 Fertilizer Calculator",
     "☁️ Current Weather",
+    "🔁 Reverse Recommendation",
 ])
 
 # ── Tab 1: Prediction ──
@@ -715,11 +725,11 @@ with tab1:
     if st.button("🚀 Get Recommendation", key="predict_btn", type="primary", use_container_width=True):
         with st.spinner("Analyzing soil and weather data..."):
             if use_live:
-                ok, data = _model_call("/predict/live", payload=base_payload)
+                ok, data = _api_call("POST", "/predict/live", base_payload)
             else:
                 payload = {**base_payload, "weather_temp": weather_temp, "humidity": humidity,
                            "rainfall": rainfall, "sunshine": sunshine, "wind_speed": wind_speed}
-                ok, data = _model_call("/predict", payload=payload)
+                ok, data = _api_call("POST", "/predict", payload)
 
             if ok:
                 _show_prediction(data)
@@ -736,7 +746,7 @@ with tab2:
 
     if st.button("🌍 Predict with Live Weather", key="live_btn", type="primary", use_container_width=True):
         with st.spinner("Fetching weather and analyzing..."):
-            ok, data = _model_call("/predict/live", payload=base_payload)
+            ok, data = _api_call("POST", "/predict/live", base_payload)
             if ok:
                 # Show fetched weather if available
                 if data.get("weather_used"):
@@ -762,7 +772,7 @@ with tab3:
         with st.spinner("Planning optimal rotation..."):
             rot_payload = {k: v for k, v in base_payload.items()
                            if k not in ("season", "month", "prev_crop", "irrigation_type")}
-            ok, data = _model_call("/rotation", payload=rot_payload)
+            ok, data = _api_call("POST", "/rotation", rot_payload)
             if ok:
                 season_icons = {"Kharif": "🌧️", "Rabi": "❄️", "Zaid": "☀️"}
                 rotation = data.get("rotation", [])
@@ -790,7 +800,7 @@ with tab4:
     st.markdown("### 🧪 Fertilizer Amendment Calculator")
     st.caption("Calculate NPK gaps and get specific fertilizer recommendations for your target crop.")
 
-    ok_crops, crop_data = _model_call("/crops")
+    ok_crops, crop_data = _api_call("GET", "/crops")
     crop_names = [c["name"] for c in crop_data.get("crops", [])] if ok_crops else ["Soybean"]
 
     col_a, col_b = st.columns(2)
@@ -806,7 +816,7 @@ with tab4:
                 nitrogen=nitrogen, phosphorus=phosphorus, potassium=potassium,
                 field_area_ha=field_area,
             )
-            ok, data = _model_call("/amendments", payload=amend_payload)
+            ok, data = _api_call("POST", "/amendments", amend_payload)
             if ok:
                 st.markdown(f"### 🌱 Amendment Plan for **{data.get('crop', target_crop)}**")
                 st.divider()
@@ -891,7 +901,7 @@ with tab5:
 
     if st.button("☁️ Fetch Weather", key="weather_btn", type="primary", use_container_width=True):
         with st.spinner("Fetching weather data..."):
-            ok, data = _model_call("/weather", params={"lat": w_lat, "lon": w_lon})
+            ok, data = _api_call("GET", "/weather", params={"lat": w_lat, "lon": w_lon})
             if ok:
                 w = data.get("weather", {})
                 wcols = st.columns(5)
@@ -905,8 +915,204 @@ with tab5:
             else:
                 st.error(f"❌ {data}")
 
+# ── Tab 6: Crop Decision Engine ──
+with tab6:
+    st.markdown("### 🧠 Crop Decision Engine")
+    st.caption(
+        "A strategic agronomic advisor. Tell us what crop you want to plant, and we'll "
+        "give you a comprehensive Go/No-Go decision, yield estimate, financial projection, "
+        "and a 4-phase action plan."
+    )
+
+    # ── Season grouping for crop selectbox ──
+    season_icons = {"Kharif": "🌧️", "Rabi": "❄️", "Zaid": "☀️", "Annual": "🌿"}
+    grouped_options = []
+    for s, crops in ALL_CROPS_GROUPED.items():
+        grouped_options.append(f"── {season_icons.get(s, '')} {s} ──")
+        grouped_options.extend(crops)
+
+    r_col1, r_col2 = st.columns([1, 2])
+    with r_col1:
+        target_raw = st.selectbox(
+            "Target Crop",
+            grouped_options,
+            index=grouped_options.index("Potato") if "Potato" in grouped_options else 1,
+            key="decide_crop_sel",
+            help="Select the crop you intend to grow.",
+        )
+        # Filter out section headers
+        target_crop_decide = target_raw if not target_raw.startswith("──") else None
+
+        if target_crop_decide:
+            _season_tag = _CROP_TO_SEASON.get(target_crop_decide, "?") if ALL_CROPS_GROUPED else "?"
+            st.caption(f"Season: **{_season_tag}**")
+
+        rev_field_area = st.number_input(
+            "Field Area (ha)", 0.1, 100.0, 1.0, 0.1, key="decide_area"
+        )
+
+    with r_col2:
+        st.markdown("**Current Soil & Weather Conditions**")
+        rc1, rc2, rc3 = st.columns(3)
+        rev_n = rc1.number_input("Nitrogen (N)", 0, 500, nitrogen, key="decide_n")
+        rev_p = rc2.number_input("Phosphorus (P)", 0, 300, phosphorus, key="decide_p")
+        rev_k = rc3.number_input("Potassium (K)", 0, 500, potassium, key="decide_k")
+
+        rc4, rc5 = st.columns(2)
+        rev_ph = rc4.slider("pH", 3.0, 10.0, float(ph), 0.1, key="decide_ph")
+        rev_ec = rc5.number_input("EC (μS/cm)", 0, 20000, int(ec), 50, key="decide_ec")
+
+        rc6, rc7 = st.columns(2)
+        rev_soil = rc6.selectbox("Soil Type", SOIL_TYPES, key="decide_soil",
+                                  index=SOIL_TYPES.index(soil_type) if soil_type in SOIL_TYPES else 0)
+        rev_drainage = rc7.selectbox("Drainage", DRAINAGE_CLASSES, key="decide_drain",
+                                      index=DRAINAGE_CLASSES.index(drainage) if drainage in DRAINAGE_CLASSES else 1)
+
+        rc8, rc9 = st.columns(2)
+        rev_rainfall = rc8.number_input("Rainfall (mm)", 0.0, 5000.0, 900.0, 10.0, key="decide_rain")
+        rev_wtemp   = rc9.number_input("Air Temp (°C)", -5.0, 55.0, 28.0, 0.5, key="decide_wtemp")
+
+        rev_zone = st.selectbox("Agro Zone", AGRO_ZONES, key="decide_zone",
+                                 index=AGRO_ZONES.index(agro_zone) if agro_zone in AGRO_ZONES else 0)
+
+    if target_crop_decide is None:
+        st.info("👆 Select a crop from the dropdown to begin.")
+    else:
+        if st.button(
+            f"🧠 Evaluate Decision for {target_crop_decide}",
+            key="decide_btn",
+            type="primary",
+            use_container_width=True,
+        ):
+            decide_payload = dict(
+                target_crop=target_crop_decide,
+                nitrogen=rev_n,
+                phosphorus=rev_p,
+                potassium=rev_k,
+                ph=rev_ph,
+                ec=rev_ec,
+                soil_type=rev_soil,
+                drainage=rev_drainage,
+                rainfall=rev_rainfall,
+                weather_temp=rev_wtemp,
+                agro_zone=rev_zone,
+                field_area_ha=rev_field_area,
+            )
+
+            with st.spinner(f"Evaluating {target_crop_decide} Decision…"):
+                # Call the new /decide API gateway route
+                ok, data = _api_call("POST", "/decide", decide_payload)
+
+            if not ok:
+                st.error(f"❌ Crop Decision evaluation failed: {data}")
+            else:
+                decision = data.get("decision", "UNKNOWN")
+                label = data.get("label", "")
+                comp_score = data.get("composite_score", 0)
+                
+                # Colors based on decision
+                if decision == "GO":
+                    badge_color, badge_icon = "#2e7d32", "🟢"
+                elif decision == "CAUTION":
+                    badge_color, badge_icon = "#f57f17", "🟡"
+                elif decision == "HIGH RISK":
+                    badge_color, badge_icon = "#e65100", "🔶"
+                else:
+                    badge_color, badge_icon = "#c62828", "🔴"
+
+                # ── Hero Section ──────────────────────────────
+                st.markdown(
+                    f"""
+                    <div style='padding:24px; border-radius:12px;
+                                background:{badge_color}11; border:2px solid {badge_color};
+                                margin-bottom: 24px;'>
+                      <div style='display:flex; justify-content:space-between; align-items:flex-start;'>
+                          <div style='display:flex; align-items:center; gap:16px;'>
+                            <span style='font-size:3rem;'>{badge_icon}</span>
+                            <div>
+                              <div style='font-size:1.2rem; opacity:0.8;'>Strategic Decision for {target_crop_decide} in {rev_zone}</div>
+                              <div style='font-size:2rem; font-weight:800; color:{badge_color};'>{decision}</div>
+                            </div>
+                          </div>
+                          <div style='text-align:right;'>
+                              <div style='font-size:1.8rem; font-weight:700;'>{comp_score}/100</div>
+                              <div style='font-size:0.9rem; opacity:0.8;'>Overall Score</div>
+                          </div>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                # ── Metrics Row ──
+                yield_data = data.get("yield_estimate", {})
+                fin_data = data.get("financials", {})
+                
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Est. Total Yield", f"{yield_data.get('estimated', 0)} {yield_data.get('unit', '')}")
+                m2.metric("Max Potential Yield", f"{yield_data.get('max_potential', 0)} {yield_data.get('unit', '')}", 
+                          delta=f"-{yield_data.get('gap', 0)} {yield_data.get('unit', '')}", delta_color="inverse")
+                m3.metric("Est. Revenue (MSP)", f"₹ {fin_data.get('estimated_revenue_inr', 0):,}")
+
+                st.markdown("---")
+
+                # ── Condition Scorecard ──
+                st.markdown("#### 📊 Condition Scorecard")
+                scores = data.get("scores", {})
+                s1, s2, s3, s4, s5 = st.columns(5)
+                s1.metric("Nutrient (NPK)", f"{scores.get('npk', 0)}/100")
+                s2.metric("Soil", f"{scores.get('soil', 0)}/100")
+                s3.metric("Water", f"{scores.get('water', 0)}/100")
+                s4.metric("Climate", f"{scores.get('climate', 0)}/100")
+                s5.metric("Base Feasibility", f"{scores.get('base_feasibility', 0)}/100")
+
+                st.markdown("---")
+
+                # ── 4-Phase Action Plan ──
+                st.markdown("#### 📋 4-Phase Action Plan")
+                action_plan = data.get("action_plan", {})
+                
+                with st.expander("🌱 Phase 1: Pre-Sowing", expanded=True):
+                    for item in action_plan.get("phase1_pre_sowing", []):
+                        st.markdown(f"- {item}")
+                with st.expander("🚜 Phase 2: Sowing", expanded=True):
+                    for item in action_plan.get("phase2_sowing", []):
+                        st.markdown(f"- {item}")
+                with st.expander("🌾 Phase 3: Crop Growth"):
+                    for item in action_plan.get("phase3_growth", []):
+                        st.markdown(f"- {item}")
+                with st.expander("✂️ Phase 4: Harvest"):
+                    for item in action_plan.get("phase4_harvest", []):
+                        st.markdown(f"- {item}")
+
+                st.markdown("---")
+
+                # ── Risks & Mitigations ──
+                risks = data.get("risks", [])
+                if risks:
+                    st.markdown("#### ⚠️ Key Risk Factors")
+                    for r in risks:
+                        st.warning(f"**Risk:** {r.get('risk', '')}  \n**Mitigation:** {r.get('mitigation', '')}")
+
+                # ── Original Base Report data for detailed NPK ──
+                base_rep = data.get("base_report", {})
+                if base_rep:
+                    with st.expander("🧪 Detailed Nutrient & Fertilizer Gap Analysis"):
+                        gap_cols = st.columns(3)
+                        gap_npk = base_rep.get("gap_npk", {})
+                        gap_cols[0].metric("Nitrogen Deficit", f"{gap_npk.get('N', 0)} mg/kg")
+                        gap_cols[1].metric("Phosphorus Deficit", f"{gap_npk.get('P', 0)} mg/kg")
+                        gap_cols[2].metric("Potassium Deficit", f"{gap_npk.get('K', 0)} mg/kg")
+                        
+                        fert = base_rep.get("fertilizer_kg_per_ha", {})
+                        if any(v > 0 for v in fert.values()):
+                            st.markdown("**Recommended Fertilizers (kg/ha):**")
+                            st.write(fert)
+
+                _show_full_json(decide_payload, data, "Crop Decision Engine")
+
 # ── Footer ──
 st.markdown("---")
 num_crops = health.get('num_classes', '?') if health else '?'
 st.caption("🌾 Crop Recommendation Engine v2.0 • Maharashtra, India • "
-           f"Model: Calibrated Random Forest ({num_crops} crops)")
+           f"Model: Calibrated Voting Ensemble ({num_crops} crops)")

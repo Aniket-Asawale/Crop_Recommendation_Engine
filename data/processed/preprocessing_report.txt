@@ -2,84 +2,93 @@
 PREPROCESSING REPORT — Crop Recommendation Engine
 ============================================================
 
-Raw rows:       7200
-Final rows:     7200
-Feature cols:   42
-Target classes: 26
+Raw rows:       50400
+Final rows:     50400
+Feature cols:   43
+Target classes: 34
 
 ── Crop Label Mapping ──
-   0 → Bajra (192 rows)
-   1 → Black Gram (213 rows)
-   2 → Brinjal (809 rows)
-   3 → Chickpea (Gram) (433 rows)
-   4 → Chilli (130 rows)
-   5 → Cotton (351 rows)
-   6 → Grape (345 rows)
-   7 → Green Gram (86 rows)
-   8 → Groundnut (83 rows)
-   9 → Jowar (Kharif) (439 rows)
-  10 → Lentil (171 rows)
-  11 → Linseed (246 rows)
-  12 → Maize (225 rows)
-  13 → Okra (116 rows)
-  14 → Onion (250 rows)
-  15 → Pigeonpea (Tur) (453 rows)
-  16 → Rabi Jowar (258 rows)
-  17 → Rice (505 rows)
-  18 → Safflower (245 rows)
-  19 → Sesame (258 rows)
-  20 → Soybean (323 rows)
-  21 → Sugarcane (405 rows)
-  22 → Sunflower (120 rows)
-  23 → Tomato (145 rows)
-  24 → Turmeric (67 rows)
-  25 → Wheat (332 rows)
+   0 → Bajra (646 rows)
+   1 → Banana (275 rows)
+   2 → Black Gram (1611 rows)
+   3 → Brinjal (4951 rows)
+   4 → Cashew (117 rows)
+   5 → Chickpea (Gram) (5741 rows)
+   6 → Chilli (195 rows)
+   7 → Coconut (240 rows)
+   8 → Coriander (86 rows)
+   9 → Cotton (2096 rows)
+  10 → Grape (1166 rows)
+  11 → Green Gram (36 rows)
+  12 → Groundnut (21 rows)
+  13 → Jowar (Kharif) (920 rows)
+  14 → Lentil (1085 rows)
+  15 → Linseed (150 rows)
+  16 → Maize (262 rows)
+  17 → Mango (1123 rows)
+  18 → Mustard (289 rows)
+  19 → Okra (569 rows)
+  20 → Onion (2257 rows)
+  21 → Pigeonpea (Tur) (1409 rows)
+  22 → Pomegranate (3284 rows)
+  23 → Potato (124 rows)
+  24 → Rabi Jowar (607 rows)
+  25 → Ragi (48 rows)
+  26 → Rice (7304 rows)
+  27 → Safflower (121 rows)
+  28 → Sesame (902 rows)
+  29 → Soybean (3645 rows)
+  30 → Sugarcane (6395 rows)
+  31 → Sunflower (93 rows)
+  32 → Tomato (585 rows)
+  33 → Wheat (2047 rows)
 
 ── Feature Statistics ──
   season_year: min=2023.00, max=2025.00, mean=2024.00
-  sensor_nitrogen: min=0.00, max=275.85, mean=92.48
-  sensor_phosphorus: min=7.95, max=146.68, mean=61.72
-  sensor_potassium: min=10.26, max=287.53, mean=116.76
-  sensor_temperature: min=5.80, max=41.60, mean=24.49
-  sensor_moisture: min=7.50, max=98.00, mean=46.83
-  sensor_ec: min=104.00, max=5598.00, mean=1148.46
-  sensor_ph: min=5.00, max=8.30, mean=6.84
-  weather_temp_mean: min=15.00, max=40.00, mean=27.01
-  weather_humidity_mean: min=20.00, max=90.00, mean=60.00
-  weather_rainfall_mm: min=0.00, max=484.00, mean=113.63
-  weather_sunshine_hrs: min=4.00, max=11.00, mean=7.18
-  weather_wind_speed: min=5.00, max=18.00, mean=11.25
-  lat: min=11.02, max=30.73, mean=19.75
-  lon: min=72.57, max=85.82, mean=76.37
-  altitude_m: min=5.00, max=1353.00, mean=381.55
-  organic_carbon_pct: min=0.20, max=1.15, mean=0.56
-  irrigation_available: min=0.00, max=1.00, mean=0.30
-  moisture_deficit: min=-12.17, max=65.56, mean=35.47
+  sensor_nitrogen: min=0.00, max=307.66, mean=102.69
+  sensor_phosphorus: min=0.00, max=187.27, mean=65.66
+  sensor_potassium: min=2.32, max=422.73, mean=128.27
+  sensor_temperature: min=3.80, max=42.50, mean=24.67
+  sensor_moisture: min=6.40, max=98.00, mean=48.15
+  sensor_ec: min=50.00, max=5072.00, mean=1195.24
+  sensor_ph: min=4.20, max=8.80, mean=6.90
+  weather_temp_mean: min=15.00, max=40.00, mean=27.04
+  weather_humidity_mean: min=20.00, max=90.00, mean=60.04
+  weather_rainfall_mm: min=0.00, max=498.20, mean=115.13
+  weather_sunshine_hrs: min=4.00, max=11.00, mean=7.16
+  weather_wind_speed: min=5.00, max=18.00, mean=11.26
+  lat: min=16.02, max=21.70, mean=19.45
+  lon: min=72.65, max=80.25, mean=75.79
+  altitude_m: min=3.00, max=1390.00, mean=364.42
+  organic_carbon_pct: min=0.17, max=1.20, mean=0.56
+  irrigation_available: min=0.00, max=1.00, mean=0.45
+  moisture_deficit: min=-12.03, max=64.01, mean=36.64
   ec_stress_flag: min=0.00, max=1.00, mean=0.00
-  month_sin: min=-1.00, max=1.00, mean=-0.13
-  month_cos: min=-1.00, max=1.00, mean=0.02
-  soil_drainage_ordinal: min=1.00, max=7.00, mean=4.84
-  drainage_class_encoded: min=0.00, max=4.00, mean=1.73
-  agro_zone_encoded: min=0.00, max=12.00, mean=8.22
+  month_sin: min=-1.00, max=1.00, mean=-0.09
+  month_cos: min=-1.00, max=1.00, mean=0.01
+  soil_drainage_ordinal: min=1.00, max=7.00, mean=5.05
+  drainage_class_encoded: min=0.00, max=4.00, mean=1.85
+  agro_zone_encoded: min=0.00, max=4.00, mean=2.15
   soil_type_Alluvial: min=0.00, max=1.00, mean=0.13
-  soil_type_Black (Regur): min=0.00, max=1.00, mean=0.58
-  soil_type_Clay: min=0.00, max=1.00, mean=0.03
-  soil_type_Laterite: min=0.00, max=1.00, mean=0.07
-  soil_type_Red: min=0.00, max=1.00, mean=0.15
-  soil_type_Sandy: min=0.00, max=1.00, mean=0.04
-  soil_texture_Clay: min=0.00, max=1.00, mean=0.17
-  soil_texture_Clay Loam: min=0.00, max=1.00, mean=0.30
-  soil_texture_Gravelly Loam: min=0.00, max=1.00, mean=0.07
-  soil_texture_Heavy Clay: min=0.00, max=1.00, mean=0.03
-  soil_texture_Sand: min=0.00, max=1.00, mean=0.04
-  soil_texture_Sandy Loam: min=0.00, max=1.00, mean=0.15
+  soil_type_Black (Regur): min=0.00, max=1.00, mean=0.61
+  soil_type_Clay: min=0.00, max=1.00, mean=0.05
+  soil_type_Laterite: min=0.00, max=1.00, mean=0.08
+  soil_type_Red: min=0.00, max=1.00, mean=0.12
+  soil_type_Sandy: min=0.00, max=1.00, mean=0.01
+  soil_texture_Clay: min=0.00, max=1.00, mean=0.19
+  soil_texture_Clay Loam: min=0.00, max=1.00, mean=0.24
+  soil_texture_Gravelly Loam: min=0.00, max=1.00, mean=0.08
+  soil_texture_Heavy Clay: min=0.00, max=1.00, mean=0.05
+  soil_texture_Sand: min=0.00, max=1.00, mean=0.01
+  soil_texture_Sandy Loam: min=0.00, max=1.00, mean=0.12
   soil_texture_Silt Loam: min=0.00, max=1.00, mean=0.13
-  soil_texture_Silty Clay: min=0.00, max=1.00, mean=0.11
-  is_season_Kharif: min=0.00, max=1.00, mean=0.50
-  is_season_Rabi: min=0.00, max=1.00, mean=0.33
-  is_season_Zaid: min=0.00, max=1.00, mean=0.17
+  soil_texture_Silty Clay: min=0.00, max=1.00, mean=0.18
+  is_season_Annual: min=0.00, max=1.00, mean=0.25
+  is_season_Kharif: min=0.00, max=1.00, mean=0.38
+  is_season_Rabi: min=0.00, max=1.00, mean=0.25
+  is_season_Zaid: min=0.00, max=1.00, mean=0.12
 
 ── Confidence Distribution ──
-  high: 4230 (58.8%)
-  medium: 1882 (26.1%)
-  uncertain: 1088 (15.1%)
+  high: 36276 (72.0%)
+  medium: 7141 (14.2%)
+  uncertain: 6983 (13.9%)
