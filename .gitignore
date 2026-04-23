@@ -52,3 +52,4 @@ build/
 # Specific project files to ignore
 start_crop_cloudflared.bat
 PLAN.md
+models/model_registry/best_hparams.json
