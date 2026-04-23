@@ -20,7 +20,7 @@ import os
 # On Streamlit Cloud, use the public API gateway URL
 # Locally, use the local gateway
 if os.environ.get("STREAMLIT_SHARING_MODE") or not os.path.exists("venv"):
-    API_BASE = "https://agroaiapp.me/api/crop"
+    API_BASE = "https://api.agroaiapp.me/api/crop"
 else:
     API_BASE = "http://127.0.0.1:8080/api/crop"
 

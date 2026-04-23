@@ -67,3 +67,9 @@ models/model_registry/2026_04/best_model_2026_04.pkl
 /models/model_registry/2026_04
 models/model_registry/2026_03/ann_scaler_2026_03.pkl
 models/model_registry/2026_03/ann_model_2026_03.pt
+models/model_registry/conformal_2026_05.pkl
+models/model_registry/calibrator_2026_05.pkl
+models/model_registry/2026_05/conformal_2026_05.pkl
+models/model_registry/2026_05/calibrator_2026_05.pkl
+models/model_registry/2026_05/scaler_2026_05.pkl
+models/model_registry/2026_05/ood_stats_2026_05.pkl
