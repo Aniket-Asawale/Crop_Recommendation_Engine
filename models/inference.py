@@ -64,36 +64,63 @@ class CropRecommender:
 
         If model_stamp is None, auto-discovers the latest model in model_registry
         by sorting best_model_*.pkl files and picking the most recent.
+
+        Supports both the original full-size model files and the compressed
+        variants (*_compressed.pkl) produced by compress_model.py for GitHub.
+        Compressed files are preferred when available.
         """
         if model_stamp is None:
             model_stamp = self._discover_latest_stamp()
             logger.info("Auto-discovered model stamp: %s", model_stamp)
 
         self.model_stamp = model_stamp
-        self.model = joblib.load(REGISTRY_DIR / f"best_model_{model_stamp}.pkl")
-        self.scaler = joblib.load(REGISTRY_DIR / f"scaler_{model_stamp}.pkl")
 
-        # \u2500\u2500 Calibrator: supports isotonic (new) and temperature (legacy) \u2500\u2500
-        cal_data = joblib.load(REGISTRY_DIR / f"calibrator_{model_stamp}.pkl")
+        # ── Prefer compressed model if available (saves ~150 MB on disk) ──
+        model_compressed = REGISTRY_DIR / f"best_model_{model_stamp}_compressed.pkl"
+        model_original   = REGISTRY_DIR / f"best_model_{model_stamp}.pkl"
+        model_path = model_compressed if model_compressed.exists() else model_original
+        logger.info("Loading model from %s", model_path.name)
+        self.model = joblib.load(model_path)
+
+        # Scaler is tiny — no compressed variant needed
+        scaler_path = REGISTRY_DIR / f"scaler_{model_stamp}.pkl"
+        self.scaler = joblib.load(scaler_path)
+
+        # ── Calibrator: prefer slim _compressed variant ──
+        cal_compressed = REGISTRY_DIR / f"calibrator_{model_stamp}_compressed.pkl"
+        cal_original   = REGISTRY_DIR / f"calibrator_{model_stamp}.pkl"
+        cal_path = cal_compressed if cal_compressed.exists() else cal_original
+        cal_data = joblib.load(cal_path)
+        logger.info("Loading calibrator from %s", cal_path.name)
+
         self.calibration_method = cal_data.get("method", "temperature")
         self.temperature = float(cal_data.get("temperature", 1.0))
+
+        # Full CalibratedClassifierCV (original format)
         self.iso_calibrator = cal_data.get("estimator", None)
+
+        # Slim isotonic maps (compressed format — list of fold→class threshold arrays)
+        # Shape: iso_maps[fold][class_idx] = {X_thresholds_, y_thresholds_, increasing_}
+        self.iso_maps  = cal_data.get("iso_maps", None)
+        self.iso_classes = cal_data.get("classes_", None)
+
         logger.info(
-            "Loaded model=%s  calibration=%s  T=%.3f",
+            "Loaded model=%s  calibration=%s  T=%.3f  slim_iso=%s",
             model_stamp, self.calibration_method, self.temperature,
+            self.iso_maps is not None,
         )
 
-        # \u2500\u2500 Optional OOD stats (Mahalanobis + RF disagreement) \u2500\u2500
+        # ── Optional OOD stats (Mahalanobis + RF disagreement) ──
         ood_path = REGISTRY_DIR / f"ood_stats_{model_stamp}.pkl"
         self.ood_stats = joblib.load(ood_path) if ood_path.exists() else None
         if self.ood_stats:
             logger.info(
-                "Loaded OOD stats \u2014 Mahal p%d threshold %.3f",
+                "Loaded OOD stats - Mahal p%d threshold %.3f",
                 self.ood_stats.get("mahal_percentile", 99),
                 self.ood_stats.get("mahal_threshold", 0.0),
             )
 
-        # \u2500\u2500 Optional conformal quantile \u2500\u2500
+        # ── Optional conformal quantile ──
         conf_path = REGISTRY_DIR / f"conformal_{model_stamp}.pkl"
         self.conformal = joblib.load(conf_path) if conf_path.exists() else None
 
@@ -127,8 +154,15 @@ class CropRecommender:
 
     @staticmethod
     def _discover_latest_stamp() -> str:
-        """Auto-discover the latest model stamp from model_registry."""
-        model_files = sorted(REGISTRY_DIR.glob("best_model_*.pkl"))
+        """Auto-discover the latest model stamp from model_registry.
+
+        Excludes *_compressed.pkl files so the stamp stays as YYYY_MM
+        (the _compressed suffix is resolved transparently in __init__).
+        """
+        model_files = sorted(
+            f for f in REGISTRY_DIR.glob("best_model_*.pkl")
+            if "_compressed" not in f.stem
+        )
         if not model_files:
             raise FileNotFoundError(
                 f"No model files found in {REGISTRY_DIR}. "
@@ -141,13 +175,43 @@ class CropRecommender:
     def _calibrate(self, raw_probs: np.ndarray, X_for_model=None) -> np.ndarray:
         """Apply the loaded calibrator.
 
-        For isotonic we call the stored CalibratedClassifierCV directly
-        (it needs the feature matrix).  For temperature we scale the logits.
+        Three paths (in priority order):
+          1. Full CalibratedClassifierCV (original large calibrator file).
+          2. Slim isotonic maps (compressed calibrator — threshold arrays only).
+          3. Temperature scaling (legacy / fallback).
         """
+        # Path 1: full CalibratedClassifierCV
         if (self.calibration_method == "isotonic"
                 and self.iso_calibrator is not None
                 and X_for_model is not None):
             return self.iso_calibrator.predict_proba(X_for_model)
+
+        # Path 2: slim isotonic maps (compressed calibrator format)
+        # iso_maps[fold][class_idx] = {X_thresholds_, y_thresholds_, increasing_}
+        # We average across folds and apply np.interp per class.
+        if (self.calibration_method == "isotonic"
+                and self.iso_maps is not None):
+            n_classes = raw_probs.shape[1]
+            cal = np.zeros_like(raw_probs)  # (n_samples, n_classes)
+            n_folds = len(self.iso_maps)
+            for fold_maps in self.iso_maps:
+                fold_cal = np.zeros_like(raw_probs)
+                for cls_idx in range(min(n_classes, len(fold_maps))):
+                    m = fold_maps[cls_idx]
+                    Xt = m["X_thresholds_"]
+                    yt = m["y_thresholds_"]
+                    # Extend boundaries so extrapolation is flat
+                    xs = np.concatenate([[0.0], Xt, [1.0]])
+                    ys = np.concatenate([[yt[0]], yt, [yt[-1]]])
+                    fold_cal[:, cls_idx] = np.interp(raw_probs[:, cls_idx], xs, ys)
+                cal += fold_cal
+            cal /= n_folds
+            # Re-normalise rows to sum to 1
+            row_sums = cal.sum(axis=1, keepdims=True)
+            row_sums = np.where(row_sums < 1e-9, 1.0, row_sums)
+            return cal / row_sums
+
+        # Path 3: temperature scaling
         logits = np.log(np.clip(raw_probs, 1e-10, 1.0))
         scaled = logits / max(self.temperature, 1e-6)
         exp_s = np.exp(scaled - scaled.max(axis=1, keepdims=True))
