@@ -1092,22 +1092,52 @@ with tab6:
                 if risks:
                     st.markdown("#### ⚠️ Key Risk Factors")
                     for r in risks:
-                        st.warning(f"**Risk:** {r.get('risk', '')}  \n**Mitigation:** {r.get('mitigation', '')}")
+                        with st.expander(f"⚠️ {r.get('risk', 'Risk')}"):
+                            st.markdown(f"**🔧 How to fix:** {r.get('mitigation', '')}")
 
-                # ── Original Base Report data for detailed NPK ──
+                # ── Actionable Fixes Panel ──
                 base_rep = data.get("base_report", {})
+                fixes_list = base_rep.get("fixes", [])
+                if fixes_list:
+                    st.markdown("---")
+                    st.markdown("#### 🔧 Actionable Fixes")
+                    fix_icons = {
+                        "soil": "🪱", "drainage": "💧", "pH": "⚗️",
+                        "salinity": "⚡", "water": "🌧️", "temperature": "🌡️",
+                        "nutrient_N": "🟢", "nutrient_P": "🟠", "nutrient_K": "🔵",
+                    }
+                    for fix in fixes_list:
+                        ftype = fix.get("type", "")
+                        icon = fix_icons.get(ftype, "📌")
+                        label = ftype.replace("nutrient_", "").replace("_", " ").title()
+                        with st.expander(f"{icon} {label}"):
+                            st.markdown(fix.get("action", ""))
+
+                # ── Detailed NPK & Fertilizer Gap ──
                 if base_rep:
                     with st.expander("🧪 Detailed Nutrient & Fertilizer Gap Analysis"):
                         gap_cols = st.columns(3)
                         gap_npk = base_rep.get("gap_npk", {})
-                        gap_cols[0].metric("Nitrogen Deficit", f"{gap_npk.get('N', 0)} mg/kg")
-                        gap_cols[1].metric("Phosphorus Deficit", f"{gap_npk.get('P', 0)} mg/kg")
-                        gap_cols[2].metric("Potassium Deficit", f"{gap_npk.get('K', 0)} mg/kg")
-                        
+                        cur = base_rep.get("current", {})
+                        ideal_npk = base_rep.get("ideal", {})
+                        for i, (nut, col) in enumerate(zip(["N", "P", "K"], gap_cols)):
+                            gap_val = gap_npk.get(nut, 0)
+                            cur_val = cur.get(nut, 0)
+                            ideal_val = ideal_npk.get(nut, "?")
+                            delta_str = f"⚠️ Deficit: {gap_val:.0f}" if gap_val > 0 else "✅ Sufficient"
+                            col.metric(
+                                f"{'Nitrogen' if nut=='N' else 'Phosphorus' if nut=='P' else 'Potassium'} ({nut})",
+                                f"{cur_val:.0f} / {ideal_val}",
+                                delta=delta_str,
+                                delta_color="inverse" if gap_val > 0 else "normal",
+                            )
                         fert = base_rep.get("fertilizer_kg_per_ha", {})
                         if any(v > 0 for v in fert.values()):
                             st.markdown("**Recommended Fertilizers (kg/ha):**")
-                            st.write(fert)
+                            fc1, fc2, fc3 = st.columns(3)
+                            fc1.metric("🟡 Urea (46% N)", f"{fert.get('Urea', 0)} kg")
+                            fc2.metric("🟤 DAP (20% P)", f"{fert.get('DAP', 0)} kg")
+                            fc3.metric("🔴 MOP (50% K)", f"{fert.get('MOP', 0)} kg")
 
                 _show_full_json(decide_payload, data, "Crop Decision Engine")
 

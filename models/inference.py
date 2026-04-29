@@ -1659,70 +1659,156 @@ class CropRecommender:
             "fert_splits": ["Basal and Top dressing"], "next_crop": "Legumes"
         })
 
-        # Calculate Component Scores (out of 100)
-        gap_npk = rev.get("gap_npk", {})
-        ideal = rev.get("ideal", {})
-        npk_total_ideal = ideal.get("N", 0) + ideal.get("P", 0) + ideal.get("K", 0)
-        npk_total_gap = (gap_npk.get("N", 0) + gap_npk.get("P", 0) + gap_npk.get("K", 0))
-        npk_score = int(max(0, 100 - (npk_total_gap / max(1, npk_total_ideal)) * 100)) if npk_total_ideal > 0 else 100
-        
+        # ── Month name helper ──
+        _MN = ["", "January", "February", "March", "April", "May", "June",
+               "July", "August", "September", "October", "November", "December"]
+        def _mn(months):
+            return ", ".join(_MN[m] for m in months if 1 <= m <= 12)
+
+        # ── Calculate Component Scores (out of 100) ──
+        gap_npk  = rev.get("gap_npk", {})
+        ideal    = rev.get("ideal", {})
         blockers = rev.get("blockers", [])
-        soil_score = 95 if not any("Soil" in b for b in blockers) else 40
-        water_score = 90 if not any("Rainfall" in b for b in blockers) else 50
-        climate_score = 90 if not any("Temperature" in b for b in blockers) else 50
-        
-        # Determine composite
+        fixes    = rev.get("fixes", [])
+        fixes_by_type = {f["type"]: f["action"] for f in fixes}
+
+        # NPK score — K weighted 1.5× (K deficits hurt yield/quality most)
+        ideal_N = ideal.get("N", 0); ideal_P = ideal.get("P", 0); ideal_K = ideal.get("K", 0)
+        gap_N   = gap_npk.get("N", 0); gap_P = gap_npk.get("P", 0); gap_K = gap_npk.get("K", 0)
+        npk_w_ideal = ideal_N + ideal_P + ideal_K * 1.5
+        npk_w_gap   = gap_N   + gap_P   + gap_K   * 1.5
+        npk_score = int(max(0, 100 - (npk_w_gap / max(1, npk_w_ideal)) * 100)) if npk_w_ideal > 0 else 100
+
+        # Soil score — blocker key is "soil_incompatibility"
+        soil_score = 40 if "soil_incompatibility" in blockers else 95
+
+        # Water score — graduated by rainfall distance from ideal range
+        rain_range  = ideal.get("rainfall_mm", [400, 1200])
+        rainfall_val = kwargs.get("rainfall", 0)
+        rain_lo, rain_hi = rain_range[0], rain_range[1]
+        if "water_mismatch" in blockers:
+            if rainfall_val < rain_lo:
+                water_score = int(max(30, 100 - ((rain_lo - rainfall_val) / max(1, rain_lo)) * 120))
+            else:
+                water_score = int(max(30, 100 - ((rainfall_val - rain_hi) / max(1, rain_hi)) * 80))
+        else:
+            water_score = 90
+        if "drainage_mismatch" in blockers:
+            water_score = max(20, water_score - 20)
+
+        # Climate score — blocker key is "temperature_mismatch"
+        climate_score = 50 if "temperature_mismatch" in blockers else 90
+
+        # Composite: NPK 35%, Water 25%, Soil 20%, Climate 10%, Base 10%
         base_score = rev.get("feasibility_score", 50)
-        composite_score = int((npk_score + soil_score + water_score + climate_score + base_score) / 5)
+        composite_score = int(
+            npk_score   * 0.35 +
+            water_score * 0.25 +
+            soil_score  * 0.20 +
+            climate_score * 0.10 +
+            base_score  * 0.10
+        )
 
         # Decision
         if composite_score >= 75:
             decision = "GO"
             label = "✅ Recommended"
-        elif composite_score >= 50:
+        elif composite_score >= 55:
             decision = "CAUTION"
             label = "⚠️ Conditional"
-        elif composite_score >= 30:
+        elif composite_score >= 35:
             decision = "HIGH RISK"
             label = "🔶 Not advised"
         else:
             decision = "NO-GO"
             label = "❌ Not feasible"
 
-        # Yield & Financials
+        # Yield & Financials — realistic: avg_t_ha is baseline, scales to max at score=100
         area_ha = kwargs.get("field_area_ha", 1.0)
-        max_y = benchmarks["max_t_ha"]
-        est_y = round(max_y * (composite_score / 100), 2)
-        yield_gap = round(max_y - est_y, 2)
-        est_revenue = int(est_y * msp * area_ha)
+        avg_y   = benchmarks.get("avg_t_ha", benchmarks["max_t_ha"] * 0.5)
+        max_y   = benchmarks["max_t_ha"]
+        t       = max(0.0, (composite_score - 50) / 50.0)
+        est_y   = round(min(max_y, max(avg_y * 0.3, avg_y + (max_y - avg_y) * t)), 2)
+        yield_gap    = round(max_y - est_y, 2)
+        est_revenue  = int(est_y * msp * area_ha)
 
-        # Action Plan
-        fixes_text = str(rev.get("fixes", [])).lower()
-        phase1 = ["Apply basal fertilizer based on gap analysis"]
-        if "lime" in fixes_text: phase1.append("Apply Lime to correct acidic soil 15 days before sowing")
-        if "gypsum" in fixes_text: phase1.append("Apply Gypsum to correct soil EC")
-        
+        # Action Plan — with month names and specific NPK actions
+        gap_parts = []
+        if gap_N > 0: gap_parts.append(f"N deficit {gap_N:.0f} mg/kg → {fixes_by_type.get('nutrient_N', 'apply Urea')}")
+        if gap_P > 0: gap_parts.append(f"P deficit {gap_P:.0f} mg/kg → {fixes_by_type.get('nutrient_P', 'apply DAP')}")
+        if gap_K > 0: gap_parts.append(f"K deficit {gap_K:.0f} mg/kg → {fixes_by_type.get('nutrient_K', 'apply MOP')}")
+
+        fixes_text = str(fixes).lower()
+        phase1 = []
+        if gap_parts:
+            phase1.append("Correct NPK gaps before sowing: " + " | ".join(gap_parts))
+        else:
+            phase1.append("Soil NPK adequate — no basal amendments needed")
+        if "lime" in fixes_text:
+            phase1.append(fixes_by_type.get("pH", "Apply agricultural lime to correct acidic pH (re-test in 6 weeks)"))
+        if "gypsum" in fixes_text or "sulphur" in fixes_text:
+            phase1.append(fixes_by_type.get("salinity", fixes_by_type.get("pH", "Apply gypsum/sulphur to correct EC/pH")))
+        if "drainage" in fixes_text:
+            phase1.append(fixes_by_type.get("drainage", "Install ridge-furrow or BBF system to improve drainage"))
+        if not phase1:
+            phase1.append("Field conditions are largely suitable — prepare land as per standard practice")
+
         phase2 = [
             f"Seed Rate: {agronomy['seed_rate']}",
             f"Spacing: {agronomy['spacing']}",
-            f"Optimal Sowing Window: Months {agronomy['sow_months']}"
+            f"Optimal Sowing Window: {_mn(agronomy['sow_months'])}",
         ]
-        
         phase3 = [
-            f"Irrigation: {agronomy['irrigation_count']} applications ({agronomy['irrigation_mm']}mm each)",
-            f"Fertilizer Splits: {', '.join(agronomy['fert_splits'])}",
-            f"Pest Watch: Monitor for {', '.join(agronomy['pest_watch'])}"
+            f"Irrigation: {agronomy['irrigation_count']} irrigations (~{agronomy['irrigation_mm']} mm each)",
+            f"Fertilizer Schedule: {', '.join(agronomy['fert_splits'])}",
+            f"Pest Watch: Monitor for {', '.join(agronomy['pest_watch'])}",
         ]
-        
         phase4 = [
-            f"Expected Harvest Window: Months {agronomy['harvest_months']}",
-            f"Next crop in rotation: {agronomy['next_crop']}"
+            f"Expected Harvest Window: {_mn(agronomy['harvest_months'])}",
+            f"Next crop in rotation: {agronomy['next_crop']}",
         ]
 
-        # Risk Factors
-        risks = [{"risk": b.replace('_', ' '), "mitigation": "See actionable fixes"} for b in blockers]
-        if npk_score < 70:
-            risks.append({"risk": "Severe Nutrient Deficit", "mitigation": "Apply full recommended NPK doses"})
+        # Risk Factors — rich descriptions with actual mitigation text
+        _risk_labels = {
+            "soil_incompatibility": f"Soil Incompatibility — {target_crop} is not suited for {kwargs.get('soil_type','')} soil",
+            "drainage_mismatch":    f"Waterlogging Risk — poor drainage causes root rot / boll drop in {target_crop}",
+            "pH_out_of_range":      f"pH Mismatch — soil pH is outside {target_crop}'s optimal range",
+            "high_salinity":        f"Salinity Stress — EC exceeds {target_crop}'s salt tolerance threshold",
+            "water_mismatch":       (
+                f"Excess Rainfall — {rainfall_val:.0f} mm exceeds {target_crop}'s ideal ({rain_lo}–{rain_hi} mm); "
+                f"waterlogging & disease pressure high"
+                if rainfall_val > rain_hi else
+                f"Rainfall Deficit — {rainfall_val:.0f} mm below {target_crop}'s need ({rain_lo}–{rain_hi} mm); "
+                f"supplemental irrigation required"
+            ),
+            "temperature_mismatch": f"Temperature Stress — air temperature is outside {target_crop}'s optimal growing window",
+            "npk_deficit":          (
+                f"Nutrient Deficit — soil NPK (N={kwargs.get('nitrogen',0)}, P={kwargs.get('phosphorus',0)}, "
+                f"K={kwargs.get('potassium',0)}) vs ideal (N={ideal_N:.0f}, P={ideal_P:.0f}, K={ideal_K:.0f}) mg/kg"
+            ),
+        }
+        _mit_map = {
+            "soil_incompatibility": fixes_by_type.get("soil", "Consider an alternative crop or amend soil."),
+            "drainage_mismatch":    fixes_by_type.get("drainage", "Install ridge-furrow / BBF system; raise beds 15–20 cm."),
+            "pH_out_of_range":      fixes_by_type.get("pH", "Apply lime (acidic soil) or sulphur/gypsum (alkaline); retest pH in 6 weeks."),
+            "high_salinity":        fixes_by_type.get("salinity", "Leach salts with 1–2 heavy irrigations; apply gypsum 1 t/ha."),
+            "water_mismatch":       fixes_by_type.get("water", "Install ridges/furrows for drainage OR plan supplemental irrigation as needed."),
+            "temperature_mismatch": fixes_by_type.get("temperature", "Adjust sowing date; use poly-mulch or shade nets for seedlings."),
+            "npk_deficit":          " | ".join(f["action"] for f in fixes if f["type"].startswith("nutrient_"))
+                                    or "Apply full NPK as per gap analysis in split doses.",
+        }
+        risks = [
+            {
+                "risk": _risk_labels.get(b, b.replace("_", " ").title()),
+                "mitigation": _mit_map.get(b, "Review field conditions and apply recommended corrections."),
+            }
+            for b in blockers
+        ]
+        if npk_score < 60:
+            risks.append({
+                "risk": f"Severe Nutrient Deficit — NPK score {npk_score}/100; significant yield loss without correction",
+                "mitigation": _mit_map.get("npk_deficit", "Apply full NPK in split doses; consider fertigation for better uptake."),
+            })
 
         return {
             "decision": decision,
