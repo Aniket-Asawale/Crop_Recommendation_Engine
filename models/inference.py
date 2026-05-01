@@ -1339,6 +1339,15 @@ class CropRecommender:
 
         Any explicitly provided weather_temp / humidity / rainfall /
         sunshine / wind_speed values will override the fetched ones.
+
+        Note: Open-Meteo's free tier only exposes a 7-day forecast, so the
+        ``rainfall`` value derived from it cannot represent a full-season
+        cumulative total (which is what the model was trained on). We always
+        substitute the season-typical rainfall from ``_SEASON_WEATHER`` for
+        the modeled feature — unless the caller passed an explicit value or
+        the live 7-day proxy is already in a sane seasonal range. Same logic
+        guards humidity / sunshine when the live fetch returns implausibly
+        small numbers (e.g. all-zero forecast windows).
         """
         lat = kwargs["lat"]
         lon = kwargs["lon"]
@@ -1349,10 +1358,32 @@ class CropRecommender:
             logger.warning("Weather fetch failed, using fallback defaults: %s", exc)
             live = self._SEASON_WEATHER.get(kwargs.get("season", "Kharif"), {})
 
-        # User-provided values take precedence
+        season_defaults = self._SEASON_WEATHER.get(
+            kwargs.get("season", "Kharif"), self._SEASON_WEATHER["Kharif"]
+        )
+
+        # Minimum plausible seasonal values; below these we fall back to the
+        # season defaults to keep the input on the training manifold.
+        _MIN_PLAUSIBLE = {
+            "rainfall":  season_defaults.get("rainfall", 400) * 0.40,
+            "humidity":  20.0,
+            "sunshine":  2.0,
+        }
+
         for key in ("weather_temp", "humidity", "rainfall", "sunshine", "wind_speed"):
-            if key not in kwargs:
-                kwargs[key] = live.get(key, self._SEASON_WEATHER["Kharif"].get(key, 0))
+            if key in kwargs:
+                continue  # explicit override wins
+            live_val = live.get(key)
+            min_ok = _MIN_PLAUSIBLE.get(key)
+            if live_val is None or (min_ok is not None and live_val < min_ok):
+                kwargs[key] = season_defaults.get(key, live_val if live_val is not None else 0)
+                if key == "rainfall":
+                    logger.info(
+                        "Live rainfall %.1f mm too low for %s — using season default %.0f mm",
+                        live_val or 0.0, kwargs.get("season", "Kharif"), kwargs[key],
+                    )
+            else:
+                kwargs[key] = live_val
 
         return self.predict(**kwargs)
 
