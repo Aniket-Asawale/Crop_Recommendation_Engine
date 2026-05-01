@@ -25,6 +25,11 @@ MODEL_OUT = REGISTRY / "best_model_2026_05_compressed.pkl"
 CAL_OUT   = REGISTRY / "calibrator_2026_05_compressed.pkl"
 LIMIT_MB  = 90.0
 
+# Small artifacts that the inference loader also looks up via _compressed.pkl
+# fallback. Compressing them keeps the GitHub/Streamlit deployment self-contained
+# from a single set of *_compressed.pkl files.
+SMALL_ARTIFACTS = ["scaler_2026_05.pkl", "ood_stats_2026_05.pkl", "conformal_2026_05.pkl"]
+
 def mb(path):
     return os.path.getsize(path) / 1024 / 1024
 
@@ -171,6 +176,25 @@ def main():
         size_cal = mb(CAL_OUT)
         print(f"  [OK] Temperature calibrator saved: {size_cal:.4f} MB")
 
+    # -- Step 3: Compress small artifacts (scaler, ood_stats, conformal) --
+    print("\n[Step 3] Compressing small artifacts (scaler / ood_stats / conformal)...")
+    small_results = []
+    for fname in SMALL_ARTIFACTS:
+        src = REGISTRY / fname
+        if not src.exists():
+            print(f"  [skip] {fname} not present in registry")
+            continue
+        dst = REGISTRY / f"{src.stem}_compressed{src.suffix}"
+        try:
+            data = joblib.load(src)
+            joblib.dump(data, dst, compress=("lzma", 9))
+            src_kb = src.stat().st_size / 1024
+            dst_kb = dst.stat().st_size / 1024
+            print(f"  [OK] {fname}: {src_kb:.1f} KB -> {dst.name}: {dst_kb:.1f} KB")
+            small_results.append((fname, dst))
+        except Exception as e:
+            print(f"  [!] Failed to compress {fname}: {e}")
+
     # -- Summary --
     print("\n" + "=" * 60)
     print("SUMMARY")
@@ -180,12 +204,14 @@ def main():
         print(f"Compressed model : {mb(MODEL_OUT):.1f} MB  ({MODEL_OUT.name})")
     if CAL_OUT.exists():
         print(f"Compressed calib : {mb(CAL_OUT):.4f} MB  ({CAL_OUT.name})")
+    for fname, dst in small_results:
+        print(f"Compressed small : {dst.stat().st_size / 1024:.2f} KB  ({dst.name})")
 
     fits = MODEL_OUT.exists() and mb(MODEL_OUT) <= LIMIT_MB
     print(f"\nFits under {LIMIT_MB} MB: {'[YES]' if fits else '[NO]'}")
     print("\nNext steps:")
-    print("  1. Rename _compressed files to replace originals (or update config.py)")
-    print("  2. Update inference.py to load _compressed calibrator (slim format)")
+    print("  1. Commit only the *_compressed.pkl artifacts (originals stay local).")
+    print("  2. inference.py auto-prefers *_compressed.pkl over the originals.")
     print("  3. Test with: python test_t9_smoke.py")
     print("  4. Add original *.pkl files to .gitignore")
 

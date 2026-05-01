@@ -156,21 +156,26 @@ class CropRecommender:
     def _discover_latest_stamp() -> str:
         """Auto-discover the latest model stamp from model_registry.
 
-        Excludes *_compressed.pkl files so the stamp stays as YYYY_MM
-        (the _compressed suffix is resolved transparently in __init__).
+        Strips the ``_compressed`` suffix and any OneDrive ``_copy``
+        marker so the stamp stays as ``YYYY_MM`` regardless of which
+        variant is actually present on disk.  The suffix is resolved
+        transparently in ``__init__`` per artifact.
         """
-        model_files = sorted(
-            f for f in REGISTRY_DIR.glob("best_model_*.pkl")
-            if "_compressed" not in f.stem
-        )
-        if not model_files:
+        stamps = set()
+        for f in REGISTRY_DIR.glob("best_model_*.pkl"):
+            stem = f.stem.replace("best_model_", "")
+            if " copy" in stem:
+                continue
+            if stem.endswith("_compressed"):
+                stem = stem[: -len("_compressed")]
+            stamps.add(stem)
+        if not stamps:
             raise FileNotFoundError(
                 f"No model files found in {REGISTRY_DIR}. "
                 "Run baseline_models.py first to train a model."
             )
-        # Extract stamp from filename: best_model_YYYY_MM.pkl -> YYYY_MM
-        latest = model_files[-1].stem.replace("best_model_", "")
-        return latest
+        # Latest by lexical order: works for YYYY_MM stamps.
+        return sorted(stamps)[-1]
 
     def _calibrate(self, raw_probs: np.ndarray, X_for_model=None) -> np.ndarray:
         """Apply the loaded calibrator.
