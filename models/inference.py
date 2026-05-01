@@ -65,9 +65,14 @@ class CropRecommender:
         If model_stamp is None, auto-discovers the latest model in model_registry
         by sorting best_model_*.pkl files and picking the most recent.
 
-        Supports both the original full-size model files and the compressed
-        variants (*_compressed.pkl) produced by compress_model.py for GitHub.
-        Compressed files are preferred when available.
+        Per-artifact resolution rules:
+          * model / scaler / ood_stats / conformal — losslessly lzma-compressed,
+            so prefer the *_compressed.pkl sibling when present.
+          * calibrator — the *_compressed.pkl is a *slim* approximation (per-fold
+            isotonic threshold arrays only, no wrapped estimator). It is a small
+            quality loss vs. the original CalibratedClassifierCV, so we prefer
+            the original calibrator_<stamp>.pkl when available and only fall
+            back to the slim file (the GitHub/Streamlit deployment case).
         """
         if model_stamp is None:
             model_stamp = self._discover_latest_stamp()
@@ -75,21 +80,27 @@ class CropRecommender:
 
         self.model_stamp = model_stamp
 
-        # ── Prefer compressed model if available (saves ~150 MB on disk) ──
-        model_compressed = REGISTRY_DIR / f"best_model_{model_stamp}_compressed.pkl"
-        model_original   = REGISTRY_DIR / f"best_model_{model_stamp}.pkl"
-        model_path = model_compressed if model_compressed.exists() else model_original
+        def _prefer_compressed(name: str) -> Path:
+            """Return the *_compressed.pkl path if present, else the plain one."""
+            compressed = REGISTRY_DIR / f"{name}_{model_stamp}_compressed.pkl"
+            original   = REGISTRY_DIR / f"{name}_{model_stamp}.pkl"
+            return compressed if compressed.exists() else original
+
+        def _prefer_original(name: str) -> Path:
+            """Return the plain *.pkl path if present, else the *_compressed.pkl one."""
+            compressed = REGISTRY_DIR / f"{name}_{model_stamp}_compressed.pkl"
+            original   = REGISTRY_DIR / f"{name}_{model_stamp}.pkl"
+            return original if original.exists() else compressed
+
+        model_path = _prefer_compressed("best_model")
         logger.info("Loading model from %s", model_path.name)
         self.model = joblib.load(model_path)
 
-        # Scaler is tiny — no compressed variant needed
-        scaler_path = REGISTRY_DIR / f"scaler_{model_stamp}.pkl"
+        scaler_path = _prefer_compressed("scaler")
         self.scaler = joblib.load(scaler_path)
 
-        # ── Calibrator: prefer slim _compressed variant ──
-        cal_compressed = REGISTRY_DIR / f"calibrator_{model_stamp}_compressed.pkl"
-        cal_original   = REGISTRY_DIR / f"calibrator_{model_stamp}.pkl"
-        cal_path = cal_compressed if cal_compressed.exists() else cal_original
+        # ── Calibrator: prefer the FULL original (slim is a fallback only) ──
+        cal_path = _prefer_original("calibrator")
         cal_data = joblib.load(cal_path)
         logger.info("Loading calibrator from %s", cal_path.name)
 
@@ -111,7 +122,7 @@ class CropRecommender:
         )
 
         # ── Optional OOD stats (Mahalanobis + RF disagreement) ──
-        ood_path = REGISTRY_DIR / f"ood_stats_{model_stamp}.pkl"
+        ood_path = _prefer_compressed("ood_stats")
         self.ood_stats = joblib.load(ood_path) if ood_path.exists() else None
         if self.ood_stats:
             logger.info(
@@ -121,7 +132,7 @@ class CropRecommender:
             )
 
         # ── Optional conformal quantile ──
-        conf_path = REGISTRY_DIR / f"conformal_{model_stamp}.pkl"
+        conf_path = _prefer_compressed("conformal")
         self.conformal = joblib.load(conf_path) if conf_path.exists() else None
 
         with open(ENCODERS_JSON) as f:
